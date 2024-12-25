@@ -45,7 +45,7 @@ def fuse_adam_step_single_tensor(
     eps: float,
     weight_decay: float,
 ) -> None:
-    _make_lazy_cuda_func("FuseAdamStepCUDASingleTensor")(
+    _make_lazy_cuda_func("fuse_adam_step_single_tensor")(
         param, grad, exp_avg, exp_avg_sq, step, lr, beta1, beta2, eps, weight_decay
     )
 
@@ -61,7 +61,7 @@ def fuse_adam_step_multi_tensor(
     tot_num_elems: int,
     chunk_size: int
 ) -> None:
-    _make_lazy_cuda_func("FuseAdamStepCUDAMultiTensor")(
+    _make_lazy_cuda_func("fuse_adam_step_multi_tensor")(
         tensor_lists, step, lr, beta1, beta2, eps, weight_decay, tensor_to_group, tot_num_elems, chunk_size
     )
 

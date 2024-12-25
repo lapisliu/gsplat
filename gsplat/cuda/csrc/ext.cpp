@@ -89,4 +89,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     );
 
     m.def("selective_adam_update", &gsplat::selective_adam_update);
+
+    m.def("fuse_adam_step_single_tensor", &gsplat::FuseAdamStepCUDASingleTensor);
+    m.def("fuse_adam_step_multi_tensor", &gsplat::FuseAdamStepCUDAMultiTensor);
 }
