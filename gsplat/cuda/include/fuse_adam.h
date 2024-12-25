@@ -6,6 +6,8 @@
 #define MAX_NUM_PARAMS_PER_CHUNK 60 // 60 is max to ensure mem of args < 4KB
 #define ILP 4
 
+namespace gsplat {
+
 void
 FuseAdamStepCUDASingleTensor(
 	torch::Tensor& pp,
@@ -45,3 +47,4 @@ FuseAdamStepCUDAMultiTensor(
     std::vector<int> tensor_to_group, 
     long tot_num_elems,
     int ADAM_CHUNK_SIZE);
+} // namespace gsplat
