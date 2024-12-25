@@ -1,5 +1,7 @@
 #include "bindings.h"
-#include "fuse_adam.h"
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
+#include <cuda.h>
 #include <vector>
 // #include <cuda_profiler_api.h>
 
