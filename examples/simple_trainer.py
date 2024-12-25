@@ -1070,6 +1070,7 @@ if __name__ == "__main__":
             "Gaussian splatting training using densification heuristics from the original paper.",
             Config(
                 strategy=DefaultStrategy(verbose=True),
+                fused_adam=True,
             ),
         ),
         "mcmc": (
