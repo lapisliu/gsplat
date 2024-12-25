@@ -33,6 +33,39 @@ def selective_adam_update(
         param, param_grad, exp_avg, exp_avg_sq, tiles_touched, lr, b1, b2, eps, N, M
     )
 
+def fuse_adam_step_single_tensor(
+    param: Tensor,
+    grad: Tensor,
+    exp_avg: Tensor,
+    exp_avg_sq: Tensor,
+    step: int,
+    lr: float,
+    beta1: float,
+    beta2: float,
+    eps: float,
+    weight_decay: float,
+) -> None:
+    _make_lazy_cuda_func("FuseAdamStepCUDASingleTensor")(
+        param, grad, exp_avg, exp_avg_sq, step, lr, beta1, beta2, eps, weight_decay
+    )
+
+def fuse_adam_step_multi_tensor(
+    tensor_lists: list,
+    step: int,
+    lr: list,
+    beta1: list,
+    beta2: list,
+    eps: list,
+    weight_decay: list,
+    tensor_to_group: list,
+    tot_num_elems: int,
+    chunk_size: int
+) -> None:
+    _make_lazy_cuda_func("FuseAdamStepCUDAMultiTensor")(
+        tensor_lists, step, lr, beta1, beta2, eps, weight_decay, tensor_to_group, tot_num_elems, chunk_size
+    )
+
+
 
 def _make_lazy_cuda_obj(name: str) -> Any:
     # pylint: disable=import-outside-toplevel

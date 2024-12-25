@@ -40,7 +40,7 @@ from gsplat.compression import PngCompression
 from gsplat.distributed import cli
 from gsplat.rendering import rasterization
 from gsplat.strategy import DefaultStrategy, MCMCStrategy
-from gsplat.optimizers import SelectiveAdam
+from gsplat.optimizers import SelectiveAdam, FusedAdamMultiTensor, FusedAdamSingleTensor
 
 
 @dataclass
@@ -118,6 +118,8 @@ class Config:
     sparse_grad: bool = False
     # Use visible adam from Taming 3DGS. (experimental)
     visible_adam: bool = False
+    # Use fused adam. (experimental)
+    fused_adam: bool = False
     # Anti-aliasing in rasterization. Might slightly hurt quantitative metrics.
     antialiased: bool = False
 
@@ -195,6 +197,7 @@ def create_splats_with_optimizers(
     sh_degree: int = 3,
     sparse_grad: bool = False,
     visible_adam: bool = False,
+    fused_adam: bool = False,
     batch_size: int = 1,
     feature_dim: Optional[int] = None,
     device: str = "cuda",
@@ -256,9 +259,12 @@ def create_splats_with_optimizers(
         optimizer_class = torch.optim.SparseAdam
     elif visible_adam:
         optimizer_class = SelectiveAdam
+    elif fused_adam:
+        optimizer_class = FusedAdamMultiTensor
+        print("Using FusedAdamMultiTensor")
     else:
         optimizer_class = torch.optim.Adam
-    optimizers = {
+    optimizers = { 
         name: optimizer_class(
             [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
             eps=1e-15 / math.sqrt(BS),
@@ -328,6 +334,7 @@ class Runner:
             sh_degree=cfg.sh_degree,
             sparse_grad=cfg.sparse_grad,
             visible_adam=cfg.visible_adam,
+            fused_adam=cfg.fused_adam,
             batch_size=cfg.batch_size,
             feature_dim=feature_dim,
             device=self.device,
@@ -1073,6 +1080,7 @@ if __name__ == "__main__":
                 opacity_reg=0.01,
                 scale_reg=0.01,
                 strategy=MCMCStrategy(verbose=True),
+                fused_adam=True,
             ),
         ),
     }
