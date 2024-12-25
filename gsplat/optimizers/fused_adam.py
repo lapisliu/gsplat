@@ -2,8 +2,9 @@ import torch
 from ..cuda._wrapper import fuse_adam_step_single_tensor, fuse_adam_step_multi_tensor
 
 class FusedAdamSingleTensor(torch.optim.Optimizer):
-    def __init__(self, params, lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8, weight_decay=0.0):
-        defaults = dict(lr=lr, beta_1=beta_1, beta_2=beta_2, epsilon=epsilon, weight_decay=weight_decay)
+    def __init__(self, params, betas, eps=1e-8, lr=1e-3, weight_decay=0.0):
+        beta_1, beta_2 = betas
+        defaults = dict(lr=lr, beta_1=beta_1, beta_2=beta_2, epsilon=eps, weight_decay=weight_decay)
         super(FusedAdamSingleTensor, self).__init__(params, defaults)
         # print(lr, beta_1, beta_2, eps, weight_decay)
 
@@ -36,9 +37,10 @@ class FusedAdamSingleTensor(torch.optim.Optimizer):
 
 
 class FusedAdamMultiTensor(torch.optim.Optimizer):
-    def __init__(self, params, lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8, weight_decay=0.0, chunk_size=1000000):
+    def __init__(self, params, betas, eps=1e-8, lr=1e-3, weight_decay=0.0, chunk_size=1000000):
+        beta_1, beta_2 = betas
         self.chunk_size = chunk_size
-        defaults = dict(lr=lr, beta_1=beta_1, beta_2=beta_2, epsilon=epsilon, weight_decay=weight_decay)
+        defaults = dict(lr=lr, beta_1=beta_1, beta_2=beta_2, epsilon=eps, weight_decay=weight_decay)
         super(FusedAdamMultiTensor, self).__init__(params, defaults)
 
     def step(self):
