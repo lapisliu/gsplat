@@ -97,6 +97,9 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
 
             group_idx += 1
 
+        if hasattr(self, 'verbose') and self.verbose:
+            print(f"Launching fused kernel with {tot_num_elems} elements and {len(param_list)} parameters.")
+
         fuse_adam_step_multi_tensor(
             [param_list, grad_list, exp_avg_list, exp_avg_sq_list], step, 
             lr_list, beta_1_list, beta_2_list, 

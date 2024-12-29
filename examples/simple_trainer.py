@@ -187,22 +187,22 @@ class Config:
 
 
 def create_splats_with_optimizers(
-    parser: Parser,
-    init_type: str = "sfm",
-    init_num_pts: int = 100_000,
-    init_extent: float = 3.0,
-    init_opacity: float = 0.1,
-    init_scale: float = 1.0,
-    scene_scale: float = 1.0,
-    sh_degree: int = 3,
-    sparse_grad: bool = False,
-    visible_adam: bool = False,
-    fused_adam: bool = False,
-    batch_size: int = 1,
-    feature_dim: Optional[int] = None,
-    device: str = "cuda",
-    world_rank: int = 0,
-    world_size: int = 1,
+        parser: Parser,
+        init_type: str = "sfm",
+        init_num_pts: int = 100_000,
+        init_extent: float = 3.0,
+        init_opacity: float = 0.1,
+        init_scale: float = 1.0,
+        scene_scale: float = 1.0,
+        sh_degree: int = 3,
+        sparse_grad: bool = False,
+        visible_adam: bool = False,
+        fused_adam: bool = False,
+        batch_size: int = 1,
+        feature_dim: Optional[int] = None,
+        device: str = "cuda",
+        world_rank: int = 0,
+        world_size: int = 1,
 ) -> Tuple[torch.nn.ParameterDict, Dict[str, torch.optim.Optimizer]]:
     if init_type == "sfm":
         points = torch.from_numpy(parser.points).float()
@@ -254,25 +254,43 @@ def create_splats_with_optimizers(
     # Note that this would not make the training exactly equivalent, see
     # https://arxiv.org/pdf/2402.18824v1
     BS = batch_size * world_size
-    optimizer_class = None
-    if sparse_grad:
-        optimizer_class = torch.optim.SparseAdam
-    elif visible_adam:
-        optimizer_class = SelectiveAdam
-    elif fused_adam:
-        optimizer_class = FusedAdamMultiTensor
-        print("Using FusedAdamMultiTensor")
-    else:
-        optimizer_class = torch.optim.Adam
-    optimizers = { 
-        name: optimizer_class(
-            [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
+    if fused_adam:
+        print("Using FusedAdamMultiTensor Optimizer")
+        all_params = [
+            {
+                "params": [v for _, v, _ in params],
+                "lr": 1e-3,  # Adjust individual LRs below
+            }
+        ]
+        optimizer = FusedAdamMultiTensor(
+            all_params,
             eps=1e-15 / math.sqrt(BS),
-            # TODO: check betas logic when BS is larger than 10 betas[0] will be zero.
             betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
         )
-        for name, _, lr in params
-    }
+        # Adjust learning rates for individual parameters
+        for name, param, lr in params:
+            param_group = next(
+                (group for group in optimizer.param_groups if param in group["params"]),
+                None,
+            )
+            if param_group:
+                param_group["lr"] = lr * math.sqrt(BS)
+        optimizers = {"fused": optimizer}
+    else:
+        optimizer_class = (
+            torch.optim.SparseAdam if sparse_grad
+            else SelectiveAdam if visible_adam
+            else torch.optim.Adam
+        )
+        optimizers = {
+            name: optimizer_class(
+                [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
+                eps=1e-15 / math.sqrt(BS),
+                betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
+            )
+            for name, _, lr in params
+        }
+
     return splats, optimizers
 
 
@@ -280,7 +298,7 @@ class Runner:
     """Engine for training and testing."""
 
     def __init__(
-        self, local_rank: int, world_rank, world_size: int, cfg: Config
+            self, local_rank: int, world_rank, world_size: int, cfg: Config
     ) -> None:
         set_random_seed(42 + local_rank)
 
@@ -448,13 +466,13 @@ class Runner:
             )
 
     def rasterize_splats(
-        self,
-        camtoworlds: Tensor,
-        Ks: Tensor,
-        width: int,
-        height: int,
-        masks: Optional[Tensor] = None,
-        **kwargs,
+            self,
+            camtoworlds: Tensor,
+            Ks: Tensor,
+            width: int,
+            height: int,
+            masks: Optional[Tensor] = None,
+            **kwargs,
     ) -> Tuple[Tensor, Tensor, Dict]:
         means = self.splats["means"]  # [N, 3]
         # quats = F.normalize(self.splats["quats"], dim=-1)  # [N, 4]
@@ -577,7 +595,7 @@ class Runner:
             Ks = data["K"].to(device)  # [1, 3, 3]
             pixels = data["image"].to(device) / 255.0  # [1, H, W, 3]
             num_train_rays_per_step = (
-                pixels.shape[0] * pixels.shape[1] * pixels.shape[2]
+                    pixels.shape[0] * pixels.shape[1] * pixels.shape[2]
             )
             image_ids = data["image_id"].to(device)
             masks = data["mask"].to(device) if "mask" in data else None  # [1, H, W]
@@ -667,14 +685,14 @@ class Runner:
             # regularizations
             if cfg.opacity_reg > 0.0:
                 loss = (
-                    loss
-                    + cfg.opacity_reg
-                    * torch.abs(torch.sigmoid(self.splats["opacities"])).mean()
+                        loss
+                        + cfg.opacity_reg
+                        * torch.abs(torch.sigmoid(self.splats["opacities"])).mean()
                 )
             if cfg.scale_reg > 0.0:
                 loss = (
-                    loss
-                    + cfg.scale_reg * torch.abs(torch.exp(self.splats["scales"])).mean()
+                        loss
+                        + cfg.scale_reg * torch.abs(torch.exp(self.splats["scales"])).mean()
                 )
 
             loss.backward()
@@ -698,7 +716,7 @@ class Runner:
             #     )
 
             if world_rank == 0 and cfg.tb_every > 0 and step % cfg.tb_every == 0:
-                mem = torch.cuda.max_memory_allocated() / 1024**3
+                mem = torch.cuda.max_memory_allocated() / 1024 ** 3
                 self.writer.add_scalar("train/loss", loss.item(), step)
                 self.writer.add_scalar("train/l1loss", l1loss.item(), step)
                 self.writer.add_scalar("train/ssimloss", ssimloss.item(), step)
@@ -716,7 +734,7 @@ class Runner:
 
             # save checkpoint before updating the model
             if step in [i - 1 for i in cfg.save_steps] or step == max_steps - 1:
-                mem = torch.cuda.max_memory_allocated() / 1024**3
+                mem = torch.cuda.max_memory_allocated() / 1024 ** 3
                 stats = {
                     "mem": mem,
                     "ellipse_time": time.time() - global_tic,
@@ -724,8 +742,8 @@ class Runner:
                 }
                 print("Step: ", step, stats)
                 with open(
-                    f"{self.stats_dir}/train_step{step:04d}_rank{self.world_rank}.json",
-                    "w",
+                        f"{self.stats_dir}/train_step{step:04d}_rank{self.world_rank}.json",
+                        "w",
                 ) as f:
                     json.dump(stats, f)
                 data = {"step": step, "splats": self.splats.state_dict()}
@@ -822,7 +840,7 @@ class Runner:
                 self.viewer.lock.release()
                 num_train_steps_per_sec = 1.0 / (time.time() - tic)
                 num_train_rays_per_sec = (
-                    num_train_rays_per_step * num_train_steps_per_sec
+                        num_train_rays_per_step * num_train_steps_per_sec
                 )
                 # Update the viewer state.
                 self.viewer.state.num_train_rays_per_sec = num_train_rays_per_sec
@@ -957,7 +975,7 @@ class Runner:
         os.makedirs(video_dir, exist_ok=True)
         writer = imageio.get_writer(f"{video_dir}/traj_{step}.mp4", fps=30)
         for i in tqdm.trange(len(camtoworlds_all), desc="Rendering trajectory"):
-            camtoworlds = camtoworlds_all[i : i + 1]
+            camtoworlds = camtoworlds_all[i: i + 1]
             Ks = K[None]
 
             renders, _, _ = self.rasterize_splats(
@@ -1001,7 +1019,7 @@ class Runner:
 
     @torch.no_grad()
     def _viewer_render_fn(
-        self, camera_state: nerfview.CameraState, img_wh: Tuple[int, int]
+            self, camera_state: nerfview.CameraState, img_wh: Tuple[int, int]
     ):
         """Callable function for the viewer."""
         W, H = img_wh
