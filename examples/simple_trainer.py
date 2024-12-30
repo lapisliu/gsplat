@@ -539,12 +539,14 @@ class Runner:
         max_steps = cfg.max_steps
         init_step = 0
 
-        schedulers = [
-            # means has a learning rate schedule, that end at 0.01 of the initial value
-            torch.optim.lr_scheduler.ExponentialLR(
-                self.optimizers["means"], gamma=0.01 ** (1.0 / max_steps)
-            ),
-        ]
+        schedulers = []
+        if "means" in self.optimizers:
+            schedulers.append(
+                # means has a learning rate schedule, that end at 0.01 of the initial value
+                torch.optim.lr_scheduler.ExponentialLR(
+                    self.optimizers["means"], gamma=0.01 ** (1.0 / max_steps)
+                ),
+            )
         if cfg.pose_opt:
             # pose optimization has a learning rate schedule
             schedulers.append(
