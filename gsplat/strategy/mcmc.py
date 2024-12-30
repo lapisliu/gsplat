@@ -67,6 +67,7 @@ class MCMCStrategy(Strategy):
         self,
         params: Union[Dict[str, torch.nn.Parameter], torch.nn.ParameterDict],
         optimizers: Dict[str, torch.optim.Optimizer],
+        fused: bool = False,
     ):
         """Sanity check for the parameters and optimizers.
 
@@ -84,7 +85,7 @@ class MCMCStrategy(Strategy):
             and optimizers is as expected.
         """
 
-        super().check_sanity(params, optimizers)
+        super().check_sanity(params, optimizers, fused)
         # The following keys are required for this strategy.
         for key in ["means", "scales", "quats", "opacities"]:
             assert key in params, f"{key} is required in params but missing."

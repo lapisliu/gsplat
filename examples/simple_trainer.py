@@ -366,7 +366,7 @@ class Runner:
         print("Model initialized. Number of GS:", len(self.splats["means"]))
 
         # Densification Strategy
-        self.cfg.strategy.check_sanity(self.splats, self.optimizers)
+        self.cfg.strategy.check_sanity(self.splats, self.optimizers, fused=cfg.fused_adam)
 
         if isinstance(self.cfg.strategy, DefaultStrategy):
             self.strategy_state = self.cfg.strategy.initialize_state(
