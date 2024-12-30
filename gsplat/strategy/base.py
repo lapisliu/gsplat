@@ -27,12 +27,9 @@ class Strategy:
             # For fused optimizer (e.g. fused_adam), there is a single optimizer managing all parameters
             if isinstance(optimizers, dict) and "fused" in optimizers:
                 fused_optimizer = optimizers["fused"]
-            elif isinstance(optimizers, torch.optim.Optimizer):
-                fused_optimizer = optimizers
             else:
                 raise ValueError(
-                    "For fused_adam, optimizers must be a single optimizer instance "
-                    "or a dictionary containing a 'fused' optimizer."
+                    "For fused_adam, optimizers must be a dictionary containing a 'fused' optimizer."
                 )
 
             fused_params = set(
