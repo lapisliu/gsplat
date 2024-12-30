@@ -51,7 +51,6 @@ def _update_param_with_optimizer(
         params: Union[Dict[str, torch.nn.Parameter], torch.nn.ParameterDict],
         optimizers: Union[Dict[str, torch.optim.Optimizer], torch.optim.Optimizer],
         names: Union[List[str], None] = None,
-        fused: bool = False,
 ):
     """Update the parameters and the state in the optimizers with defined functions.
 
@@ -63,12 +62,12 @@ def _update_param_with_optimizer(
         params: A dictionary of parameters.
         optimizers: A dictionary of optimizers.
         names: A list of key names to update. If None, update all. Default: None.
-        fused: Whether to handle the fused optimizer case. Default: False.
     """
     if names is None:
         # If names is not provided, update all parameters
         names = list(params.keys())
 
+    fused = "fused" in optimizers
     if fused:
         # Handle fused optimizer case
         assert isinstance(optimizers, (dict, torch.optim.Optimizer)), (
