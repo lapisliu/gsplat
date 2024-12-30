@@ -1,6 +1,7 @@
 import torch
 from ..cuda._wrapper import fuse_adam_step_single_tensor, fuse_adam_step_multi_tensor
 
+
 class FusedAdamSingleTensor(torch.optim.Optimizer):
     def __init__(self, params, betas, eps=1e-8, lr=1e-3, weight_decay=0.0):
         beta_1, beta_2 = betas
@@ -31,9 +32,8 @@ class FusedAdamSingleTensor(torch.optim.Optimizer):
                 weight_decay = group['weight_decay']
                 state['step'] += 1
                 fuse_adam_step_single_tensor(
-                    p.data, grad.data, exp_avg.data, exp_avg_sq.data, state['step'], 
+                    p.data, grad.data, exp_avg.data, exp_avg_sq.data, state['step'],
                     lr, beta_1, beta_2, epsilon, weight_decay)
-
 
 
 class FusedAdamMultiTensor(torch.optim.Optimizer):
@@ -70,7 +70,7 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
             beta_2_list.append(beta_2)
             eps_list.append(epsilon)
             weight_decay_list.append(weight_decay)
-            
+
             for p in group['params']:
                 if p.grad is None:
                     continue
@@ -97,10 +97,8 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
 
             group_idx += 1
 
-        if hasattr(self, 'verbose') and self.verbose:
-            print(f"Launching fused kernel with {tot_num_elems} elements and {len(param_list)} parameters.")
-
+        print(f"Launching fused kernel with {tot_num_elems} elements and {len(param_list)} parameters.")
         fuse_adam_step_multi_tensor(
-            [param_list, grad_list, exp_avg_list, exp_avg_sq_list], step, 
-            lr_list, beta_1_list, beta_2_list, 
+            [param_list, grad_list, exp_avg_list, exp_avg_sq_list], step,
+            lr_list, beta_1_list, beta_2_list,
             eps_list, weight_decay_list, tensor_to_group, tot_num_elems, self.chunk_size)

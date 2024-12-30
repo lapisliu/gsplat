@@ -270,7 +270,11 @@ def create_splats_with_optimizers(
         # Adjust learning rates for individual parameters
         for name, param, lr in params:
             param_group = next(
-                (group for group in optimizer.param_groups if param in group["params"]),
+                (
+                    group
+                    for group in optimizer.param_groups
+                    if any(p is param for p in group["params"])
+                ),
                 None,
             )
             if param_group:
