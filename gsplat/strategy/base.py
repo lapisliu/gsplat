@@ -25,13 +25,15 @@ class Strategy:
 
         if fused:
             # For fused optimizer (e.g. fused_adam), there is a single optimizer managing all parameters
-            assert isinstance(optimizers, torch.optim.Optimizer), (
-                "For fused optimizer, optimizers should be a single optimizer instance."
-            )
-            fused_optimizer = optimizers
-            assert len(fused_optimizer.param_groups) == 1, (
-                "Fused optimizer must have exactly one param_group for all parameters."
-            )
+            if isinstance(optimizers, dict) and "fused" in optimizers:
+                fused_optimizer = optimizers["fused"]
+            elif isinstance(optimizers, torch.optim.Optimizer):
+                fused_optimizer = optimizers
+            else:
+                raise ValueError(
+                    "For fused_adam, optimizers must be a single optimizer instance "
+                    "or a dictionary containing a 'fused' optimizer."
+                )
 
             fused_params = set(
                 id(p) for group in fused_optimizer.param_groups for p in group["params"]
