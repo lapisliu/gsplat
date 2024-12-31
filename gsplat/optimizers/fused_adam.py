@@ -9,7 +9,7 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
         defaults = dict(lr=lr, beta_1=beta_1, beta_2=beta_2, epsilon=eps, weight_decay=weight_decay)
         super(FusedAdamMultiTensor, self).__init__(params, defaults)
 
-    def step(self):
+    def step(self, closure=None):
 
         param_list = []
         grad_list = []
@@ -67,7 +67,8 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
             print(f"Launching fused kernel with {tot_num_elems} elements and {len(param_list)} parameters.")
 
         # debug lr
-        print(lr_list)
+        print(f"lr: {lr_list}")
+        print(f"tensor_to_group: {tensor_to_group}")
         fuse_adam_step_multi_tensor(
             [param_list, grad_list, exp_avg_list, exp_avg_sq_list], step,
             lr_list, beta_1_list, beta_2_list,
