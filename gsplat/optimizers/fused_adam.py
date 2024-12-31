@@ -24,7 +24,6 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
         group_idx = 0
         tot_num_elems = 0
         step = 0
-        param_to_group = [0]  # param_list[i] belongs to group j if param_to_group[j] <= i < param_to_group[j+1]
 
         for group in self.param_groups:
             lr = group['lr']
@@ -53,10 +52,6 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
 
                 state['step'] += 1
 
-                print(f"p.data numel: {p.data.numel()}")
-                print(f"p.grad numel: {p.grad.numel()}")
-                print(f"exp_avg numel: {exp_avg.numel()}")
-                print(f"exp_avg_sq numel: {exp_avg_sq.numel()}")
                 param_list.append(p.data.contiguous())
                 grad_list.append(p.grad.contiguous())
                 exp_avg_list.append(exp_avg.data.contiguous())
@@ -71,9 +66,6 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
         if hasattr(self, 'verbose') and self.verbose:
             print(f"Launching fused kernel with {tot_num_elems} elements and {len(param_list)} parameters.")
 
-        print(f"tot_num_elems: {tot_num_elems}")
-        print(f"param_list len: {len(param_list)}")
-        print(f"step: {step}")
         fuse_adam_step_multi_tensor(
             [param_list, grad_list, exp_avg_list, exp_avg_sq_list], step,
             lr_list, beta_1_list, beta_2_list,
