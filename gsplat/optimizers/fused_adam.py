@@ -55,9 +55,17 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
                 state['step'] += 1
 
                 param_list.append(p.data.contiguous())
+                print(f"p.data.shape: {p.data.shape}")
+                print(f"param_list len: {len(param_list)}")
                 grad_list.append(p.grad.contiguous())
+                print(f"p.grad.shape: {p.grad.shape}")
+                print(f"grad_list len: {len(grad_list)}")
                 exp_avg_list.append(exp_avg.data.contiguous())
+                print(f"exp_avg.shape: {exp_avg.shape}")
+                print(f"exp_avg_list len: {len(exp_avg_list)}")
                 exp_avg_sq_list.append(exp_avg_sq.data.contiguous())
+                print(f"exp_avg_sq.shape: {exp_avg_sq.shape}")
+                print(f"exp_avg_sq_list len: {len(exp_avg_sq_list)}")
                 step = state['step']
 
                 tot_num_elems += p.numel()
@@ -70,7 +78,13 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
 
         # debug lr
         print(f"lr: {lr_list}")
+        print(f"beta_1: {beta_1_list}")
+        print(f"beta_2: {beta_2_list}")
+        print(f"eps: {eps_list}")
+        print(f"weight_decay: {weight_decay_list}")
+        print(f"tot_num_elems: {tot_num_elems}")
         print(f"tensor_to_group: {tensor_to_group}")
+        print(f"step: {step}")
         fuse_adam_step_multi_tensor(
             [param_list, grad_list, exp_avg_list, exp_avg_sq_list], step,
             lr_list, beta_1_list, beta_2_list,
