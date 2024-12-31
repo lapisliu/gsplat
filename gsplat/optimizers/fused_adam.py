@@ -53,20 +53,18 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
 
                 state['step'] += 1
 
+                print(f"p.data numel: {p.data.numel()}")
+                print(f"p.grad numel: {p.grad.numel()}")
+                print(f"exp_avg numel: {exp_avg.numel()}")
+                print(f"exp_avg_sq numel: {exp_avg_sq.numel()}")
                 param_list.append(p.data.contiguous())
-                print(f"param_list len: {len(param_list)}")
                 grad_list.append(p.grad.contiguous())
-                print(f"grad_list len: {len(grad_list)}")
                 exp_avg_list.append(exp_avg.data.contiguous())
-                print(f"exp_avg_list len: {len(exp_avg_list)}")
                 exp_avg_sq_list.append(exp_avg_sq.data.contiguous())
-                print(f"exp_avg_sq_list len: {len(exp_avg_sq_list)}")
                 step = state['step']
 
                 tot_num_elems += p.numel()
                 tensor_to_group.append(group_idx)
-
-            param_to_group.append(len(param_list))
 
             group_idx += 1
 

@@ -128,7 +128,6 @@ void FuseAdamStepCUDAMultiTensor(
     std::vector<torch::Tensor> v = tensor_list[3];
 
     int num_params = tensor_list[0].size();
-    printf("num_params: %d\n", num_params);
     int tot_num_chunks =
         (int)(tot_num_elems + ADAM_CHUNK_SIZE - 1) / ADAM_CHUNK_SIZE;
 
