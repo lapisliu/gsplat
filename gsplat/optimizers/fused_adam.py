@@ -25,7 +25,6 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
         tot_num_elems = 0
         step = 0
 
-        print(f"param_groups: {self.param_groups}")
         print(f"param_groups len:", len(self.param_groups))
         for group in self.param_groups:
             lr = group['lr']

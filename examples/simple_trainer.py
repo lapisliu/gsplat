@@ -257,28 +257,14 @@ def create_splats_with_optimizers(
     if fused_adam:
         print("Using FusedAdamMultiTensor Optimizer")
         all_params = [
-            {
-                "params": [v for _, v, _ in params],
-                "lr": 1e-3,  # Adjust individual LRs below
-            }
+            {"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}
+            for name, _, lr in params
         ]
         optimizer = FusedAdamMultiTensor(
             all_params,
             eps=1e-15 / math.sqrt(BS),
             betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
         )
-        # Adjust learning rates for individual parameters
-        for name, param, lr in params:
-            param_group = next(
-                (
-                    group
-                    for group in optimizer.param_groups
-                    if any(p is param for p in group["params"])
-                ),
-                None,
-            )
-            if param_group:
-                param_group["lr"] = lr * math.sqrt(BS)
         optimizers = {"fused": optimizer}
     else:
         optimizer_class = (
