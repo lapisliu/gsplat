@@ -25,6 +25,8 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
         tot_num_elems = 0
         step = 0
 
+        print(f"param_groups: {self.param_groups}")
+        print(f"param_groups len:", len(self.param_groups))
         for group in self.param_groups:
             lr = group['lr']
             beta_1, beta_2 = group['beta_1'], group['beta_2']
@@ -37,6 +39,7 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
             eps_list.append(epsilon)
             weight_decay_list.append(weight_decay)
 
+            print(f"group len: {len(group['params'])}")
             for p in group['params']:
                 if p.grad is None:
                     continue
