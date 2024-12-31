@@ -92,5 +92,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
     m.def("fuse_adam_step_multi_tensor", &gsplat::FuseAdamStepCUDAMultiTensor);
 
-    m.def("customized_fused_adam_update", &gsplat::customized_fuse_adam_update);
+    m.def("customized_fused_adam_update", &gsplat::customized_fused_adam_update);
 }
