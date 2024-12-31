@@ -1,39 +1,5 @@
 import torch
-from ..cuda._wrapper import fuse_adam_step_single_tensor, fuse_adam_step_multi_tensor
-
-
-class FusedAdamSingleTensor(torch.optim.Optimizer):
-    def __init__(self, params, betas, eps=1e-8, lr=1e-3, weight_decay=0.0):
-        beta_1, beta_2 = betas
-        defaults = dict(lr=lr, beta_1=beta_1, beta_2=beta_2, epsilon=eps, weight_decay=weight_decay)
-        super(FusedAdamSingleTensor, self).__init__(params, defaults)
-        # print(lr, beta_1, beta_2, eps, weight_decay)
-
-    def step(self):
-        for group in self.param_groups:
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-
-                grad = p.grad.data
-
-                state = self.state[p]
-
-                if len(state) == 0:
-                    state['step'] = 0
-                    state['exp_avg'] = torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
-                    state['exp_avg_sq'] = torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
-
-                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-
-                lr = group['lr']
-                beta_1, beta_2 = group['beta_1'], group['beta_2']
-                epsilon = group['epsilon']
-                weight_decay = group['weight_decay']
-                state['step'] += 1
-                fuse_adam_step_single_tensor(
-                    p.data, grad.data, exp_avg.data, exp_avg_sq.data, state['step'],
-                    lr, beta_1, beta_2, epsilon, weight_decay)
+from ..cuda._wrapper import fuse_adam_step_multi_tensor
 
 
 class FusedAdamMultiTensor(torch.optim.Optimizer):
@@ -97,7 +63,11 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
 
             group_idx += 1
 
-        print(f"Launching fused kernel with {tot_num_elems} elements and {len(param_list)} parameters.")
+        if hasattr(self, 'verbose') and self.verbose:
+            print(f"Launching fused kernel with {tot_num_elems} elements and {len(param_list)} parameters.")
+
+        # debug lr
+        print(lr_list)
         fuse_adam_step_multi_tensor(
             [param_list, grad_list, exp_avg_list, exp_avg_sq_list], step,
             lr_list, beta_1_list, beta_2_list,
