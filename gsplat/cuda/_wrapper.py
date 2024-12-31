@@ -51,6 +51,23 @@ def fuse_adam_step_multi_tensor(
     )
 
 
+def customized_fused_adam_update(
+        params: list,
+        grads: list,
+        exp_avgs: list,
+        exp_avg_sqs: list,
+        step: int,
+        lr: list,
+        beta1: list,
+        beta2: list,
+        eps: list,
+        weight_decay: list,
+        tot_num_elems: int,
+) -> None:
+    _make_lazy_cuda_func("customized_fused_adam_update")(
+        params, grads, exp_avgs, exp_avg_sqs, step, lr, beta1, beta2, eps, weight_decay, tot_num_elems
+    )
+
 
 def _make_lazy_cuda_obj(name: str) -> Any:
     # pylint: disable=import-outside-toplevel
