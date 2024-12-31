@@ -314,24 +314,26 @@ void customized_fused_adam_update(
         exp_avg_sq_ptrs[i] = exp_avg_sqs[i].data_ptr<float>();
     }
 
-    op_customized_fused_adam_kernel<float><<<num_blocks, num_threads>>>(
-        param_ptrs.data(),
-        grad_ptrs.data(),
-        exp_avg_ptrs.data(),
-        exp_avg_sq_ptrs.data(),
-        step,
-        tot_num_elems,
-        num_params
-    );
+    printf("Type of param_ptrs.data(): %p\n", param_ptrs.data());
 
-    cudaError_t launchErr = cudaGetLastError();
-    if (launchErr != cudaSuccess) {
-        printf("Kernel Launch Error: %s\n", cudaGetErrorString(launchErr));
-    }
-
-    cudaError_t err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-        printf("CUDA Error: %s\n", cudaGetErrorString(err));
-    }
+//    op_customized_fused_adam_kernel<float><<<num_blocks, num_threads>>>(
+//        param_ptrs.data(),
+//        grad_ptrs.data(),
+//        exp_avg_ptrs.data(),
+//        exp_avg_sq_ptrs.data(),
+//        step,
+//        tot_num_elems,
+//        num_params
+//    );
+//
+//    cudaError_t launchErr = cudaGetLastError();
+//    if (launchErr != cudaSuccess) {
+//        printf("Kernel Launch Error: %s\n", cudaGetErrorString(launchErr));
+//    }
+//
+//    cudaError_t err = cudaDeviceSynchronize();
+//    if (err != cudaSuccess) {
+//        printf("CUDA Error: %s\n", cudaGetErrorString(err));
+//    }
 }
 } // namespace gsplat
