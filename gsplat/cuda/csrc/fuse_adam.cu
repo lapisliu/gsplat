@@ -314,7 +314,7 @@ void customized_fused_adam_update(
         exp_avg_sq_ptrs[i] = exp_avg_sqs[i].data_ptr<float>();
     }
 
-    printf("Type of param_ptrs.data(): %p\n", param_ptrs.data());
+    std::cout << "Type of param_ptrs.data(): " << typeid(param_ptrs.data()).name() << std::endl;
 
 //    op_customized_fused_adam_kernel<float><<<num_blocks, num_threads>>>(
 //        param_ptrs.data(),
