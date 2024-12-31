@@ -1,2 +1,2 @@
 from .selective_adam import SelectiveAdam
-from .fused_adam import FusedAdamMultiTensor, FusedAdamSingleTensor
+from .fused_adam import FusedAdamMultiTensor

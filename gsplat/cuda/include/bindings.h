@@ -507,19 +507,6 @@ void selective_adam_update(
     const uint32_t N,
     const uint32_t M);
 
-void
-FuseAdamStepCUDASingleTensor(
-	torch::Tensor& pp,
-	torch::Tensor& grad,
-	torch::Tensor& m,
-	torch::Tensor& v,
-	int t,
-	float lr,
-	float beta_1,
-	float beta_2,
-	float epsilon,
-	float weight_decay);
-
 struct TensorInfo {                                               // Total: (6*8+5*4) * T ~ 68 * 60 = 4KB - 16
     float* param_addr[MAX_NUM_PARAMS_PER_CHUNK];
     float* grad_addr[MAX_NUM_PARAMS_PER_CHUNK];
