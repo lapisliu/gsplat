@@ -72,11 +72,7 @@ class FusedAdamMultiTensor(torch.optim.Optimizer):
             print(f"Launching fused kernel with {tot_num_elems} elements and {len(param_list)} parameters.")
 
         print(f"tot_num_elems: {tot_num_elems}")
-        print(f"param_to_group: {param_to_group}")
         print(f"param_list len: {len(param_list)}")
-        print(f"grad_list len: {len(grad_list)}")
-        print(f"exp_avg_list len: {len(exp_avg_list)}")
-        print(f"exp_avg_sq_list len: {len(exp_avg_sq_list)}")
         print(f"step: {step}")
         fuse_adam_step_multi_tensor(
             [param_list, grad_list, exp_avg_list, exp_avg_sq_list], step,
