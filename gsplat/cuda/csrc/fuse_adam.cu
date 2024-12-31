@@ -226,12 +226,15 @@ __global__ void op_customized_fused_adam_kernel(
         int group_idx = 0;
         while (idx >= const_data_point_to_group[group_idx]) {
             ++group_idx;
+            if (group_idx >= num_params) {
+                return;
+            }
         }
         int cur_idx =
             idx -
             (group_idx == 0 ? 0 : const_data_point_to_group[group_idx - 1]);
 
-        if (group_idx >= num_params || cur_idx < 0) {
+        if (cur_idx < 0 || cur_idx >= params[group_idx].size()) {
             return;
         }
 
@@ -267,6 +270,10 @@ void customized_fused_adam_update(
 ) {
 
     int num_params = params.size();
+    if (num_params > 6) {
+        printf("The number of parameters should be less than or equal to 6\n");
+        return;
+    }
 
     cudaMemcpyToSymbol(const_lr, lr.data(), num_params * sizeof(float));
     cudaMemcpyToSymbol(const_beta1, beta_1.data(), num_params * sizeof(float));
@@ -294,23 +301,12 @@ void customized_fused_adam_update(
 
     int num_threads = 256;
     int num_blocks = (int)(tot_num_elems + num_threads - 1) / num_threads;
-    std::vector<float *> param_ptrs(num_params);
-    std::vector<float *> grad_ptrs(num_params);
-    std::vector<float *> moment1_ptrs(num_params);
-    std::vector<float *> moment2_ptrs(num_params);
-
-    for (int i = 0; i < num_params; i++) {
-        param_ptrs[i] = params[i].data_ptr<float>();
-        grad_ptrs[i] = grads[i].data_ptr<float>();
-        moment1_ptrs[i] = exp_avgs[i].data_ptr<float>();
-        moment2_ptrs[i] = exp_avg_sqs[i].data_ptr<float>();
-    }
 
     op_customized_fused_adam_kernel<float><<<num_blocks, num_threads>>>(
-        param_ptrs.data(),
-        grad_ptrs.data(),
-        moment1_ptrs.data(),
-        moment2_ptrs.data(),
+        (float **)params.data(),
+        (float **)grads.data(),
+        (float **)exp_avgs.data(),
+        (float **)exp_avg_sqs.data(),
         step,
         tot_num_elems,
         num_params
