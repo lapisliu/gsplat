@@ -302,11 +302,23 @@ void customized_fused_adam_update(
     int num_threads = 256;
     int num_blocks = (int)(tot_num_elems + num_threads - 1) / num_threads;
 
+    std::vector<float *> param_ptrs(num_params);
+    std::vector<float *> grad_ptrs(num_params);
+    std::vector<float *> exp_avg_ptrs(num_params);
+    std::vector<float *> exp_avg_sq_ptrs(num_params);
+
+    for (int i = 0; i < num_params; i++) {
+        param_ptrs[i] = params[i].data_ptr<float>();
+        grad_ptrs[i] = grads[i].data_ptr<float>();
+        exp_avg_ptrs[i] = exp_avgs[i].data_ptr<float>();
+        exp_avg_sq_ptrs[i] = exp_avg_sqs[i].data_ptr<float>();
+    }
+
     op_customized_fused_adam_kernel<float><<<num_blocks, num_threads>>>(
-        params.data_ptr<float>(),
-        grads.data_ptr<float>(),
-        exp_avgs.data_ptr<float>(),
-        exp_avg_sqs.data_ptr<float>(),
+        param_ptrs.data(),
+        grad_ptrs.data(),
+        exp_avg_ptrs.data(),
+        exp_avg_sq_ptrs.data(),
         step,
         tot_num_elems,
         num_params
