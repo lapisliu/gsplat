@@ -201,33 +201,37 @@ void FuseAdamStepCUDAMultiTensor(
     cudaDeviceSynchronize();
 }
 
-
-__constant__ float const_lr[6]; // Assuming the number of parameters (groups) is less than or equal to 6
+__constant__ float const_lr[6]; // Assuming the number of parameters (groups) is
+                                // less than or equal to 6
 __constant__ float const_beta1[6];
 __constant__ float const_beta2[6];
 __constant__ float const_epsilon[6];
 __constant__ float const_weight_decay[6];
 __constant__ int const_data_point_to_group[6];
 
-template<typename T>
+template <typename T>
 __global__ void op_customized_fused_adam_kernel(
-    T** params,
-    T** grads,
-    T** moment1,
-    T** moment2,
+    T **params,
+    T **grads,
+    T **moment1,
+    T **moment2,
     int step,
-    int tot_num_elems
+    int tot_num_elems,
+    int num_params
 ) {
 
     int stride_x = blockDim.x * gridDim.x;
-    for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < tot_num_elems; idx += stride_x) {
+    for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < tot_num_elems;
+         idx += stride_x) {
         int group_idx = 0;
         while (idx >= const_data_point_to_group[group_idx]) {
             ++group_idx;
         }
-        int cur_idx  = idx - (group_idx == 0 ? 0 : const_data_point_to_group[group_idx - 1]);
+        int cur_idx =
+            idx -
+            (group_idx == 0 ? 0 : const_data_point_to_group[group_idx - 1]);
 
-        if (group_idx >= 6 || cur_idx < 0 || cur_idx >= const_data_point_to_group[group_idx]) {
+        if (group_idx >= num_params || cur_idx < 0) {
             return;
         }
 
@@ -239,7 +243,8 @@ __global__ void op_customized_fused_adam_kernel(
         v = const_beta2[group_idx] * v + (1 - const_beta2[group_idx]) * g * g;
         T m_hat = m / (1 - powf(const_beta1[group_idx], step));
         T v_hat = v / (1 - powf(const_beta2[group_idx], step));
-        T update_step = -const_lr[group_idx] * m_hat / (sqrtf(v_hat) + const_epsilon[group_idx]);
+        T update_step = -const_lr[group_idx] * m_hat /
+                        (sqrtf(v_hat) + const_epsilon[group_idx]);
 
         params[group_idx][cur_idx] += update_step;
         moment1[group_idx][cur_idx] = m;
@@ -261,45 +266,60 @@ void customized_fused_adam_update(
     long tot_num_elems
 ) {
 
-    cudaMemcpyToSymbol(const_lr, lr.data(), tot_num_elems * sizeof(float));
-    cudaMemcpyToSymbol(const_beta1, beta_1.data(), tot_num_elems * sizeof(float));
-    cudaMemcpyToSymbol(const_beta2, beta_2.data(), tot_num_elems * sizeof(float));
-    cudaMemcpyToSymbol(const_epsilon, epsilon.data(), tot_num_elems * sizeof(float));
-    cudaMemcpyToSymbol(const_weight_decay, weight_decay.data(), tot_num_elems * sizeof(float));
-
     int num_params = params.size();
-    int data_point_to_group[6]; // param[i] belongs to param group j if data_point_to_group[j-1] <= i < data_point_to_group[j]
+
+    cudaMemcpyToSymbol(const_lr, lr.data(), num_params * sizeof(float));
+    cudaMemcpyToSymbol(const_beta1, beta_1.data(), num_params * sizeof(float));
+    cudaMemcpyToSymbol(const_beta2, beta_2.data(), num_params * sizeof(float));
+    cudaMemcpyToSymbol(
+        const_epsilon, epsilon.data(), num_params * sizeof(float)
+    );
+    cudaMemcpyToSymbol(
+        const_weight_decay, weight_decay.data(), num_params * sizeof(float)
+    );
+
+    int data_point_to_group[6]; // param[i] belongs to param group j if
+                                // data_point_to_group[j-1] <= i <
+                                // data_point_to_group[j]
     int cumulative = 0;
     for (int i = 0; i < num_params; i++) {
         cumulative += params[i].numel();
         data_point_to_group[i] = cumulative;
     }
-    printf("total_params: %d\n", data_point_to_group[num_params-1]);
+    printf("total_params: %d\n", data_point_to_group[num_params - 1]);
     printf("tot_num_elems: %ld\n", tot_num_elems);
-    cudaMemcpyToSymbol(const_data_point_to_group, data_point_to_group, num_params * sizeof(int));
+    cudaMemcpyToSymbol(
+        const_data_point_to_group, data_point_to_group, num_params * sizeof(int)
+    );
 
-        int num_threads = 256;
-        int num_blocks = (int)(tot_num_elems + num_threads - 1) / num_threads;
-        std::vector<float*> param_ptrs(num_params);
-        std::vector<float*> grad_ptrs(num_params);
-        std::vector<float*> moment1_ptrs(num_params);
-        std::vector<float*> moment2_ptrs(num_params);
+    int num_threads = 256;
+    int num_blocks = (int)(tot_num_elems + num_threads - 1) / num_threads;
+    std::vector<float *> param_ptrs(num_params);
+    std::vector<float *> grad_ptrs(num_params);
+    std::vector<float *> moment1_ptrs(num_params);
+    std::vector<float *> moment2_ptrs(num_params);
 
-        for (int i = 0; i < num_params; i++) {
-            param_ptrs[i] = params[i].data_ptr<float>()
-            grad_ptrs[i] = grads[i].data_ptr<float>()
-            moment1_ptrs[i] = exp_avgs[i].data_ptr<float>()
-            moment2_ptrs[i] = exp_avg_sqs[i].data_ptr<float>()
-        }
+    for (int i = 0; i < num_params; i++) {
+        param_ptrs[i] = params[i].data_ptr<float>();
+        grad_ptrs[i] = grads[i].data_ptr<float>();
+        moment1_ptrs[i] = exp_avgs[i].data_ptr<float>();
+        moment2_ptrs[i] = exp_avg_sqs[i].data_ptr<float>();
+    }
 
-        op_customized_fused_adam_kernel<float><<<num_blocks, num_threads>>>(
-            param_ptrs.data(),
-            grad_ptrs.data(),
-            moment1_ptrs.data(),
-            moment2_ptrs.data(),
-            step,
-            tot_num_elems
-        );
+    op_customized_fused_adam_kernel<float><<<num_blocks, num_threads>>>(
+        param_ptrs.data(),
+        grad_ptrs.data(),
+        moment1_ptrs.data(),
+        moment2_ptrs.data(),
+        step,
+        tot_num_elems,
+        num_params
+    );
+
+    cudaError_t launchErr = cudaGetLastError();
+    if (launchErr != cudaSuccess) {
+        printf("Kernel Launch Error: %s\n", cudaGetErrorString(launchErr));
+    }
 
     cudaError_t err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
