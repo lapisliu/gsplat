@@ -303,10 +303,10 @@ void customized_fused_adam_update(
     int num_blocks = (int)(tot_num_elems + num_threads - 1) / num_threads;
 
     op_customized_fused_adam_kernel<float><<<num_blocks, num_threads>>>(
-        (float **)params.data(),
-        (float **)grads.data(),
-        (float **)exp_avgs.data(),
-        (float **)exp_avg_sqs.data(),
+        params.data_ptr<float>(),
+        grads.data_ptr<float>(),
+        exp_avgs.data_ptr<float>(),
+        exp_avg_sqs.data_ptr<float>(),
         step,
         tot_num_elems,
         num_params
