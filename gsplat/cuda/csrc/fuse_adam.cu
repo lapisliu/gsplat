@@ -205,6 +205,8 @@ __constant__ float const_lr[6]; // Assuming the number of parameters (groups) is
                                 // less than or equal to 6
 __constant__ float const_beta1[6];
 __constant__ float const_beta2[6];
+__constant__ float const_correction1[6];
+__constant__ float const_correction2[6];
 __constant__ float const_epsilon[6];
 __constant__ float const_weight_decay[6];
 __constant__ int const_data_point_to_group[6];
@@ -243,8 +245,8 @@ __global__ void op_customized_fused_adam_kernel(
 
         m = const_beta1[group_idx] * m + (1 - const_beta1[group_idx]) * g;
         v = const_beta2[group_idx] * v + (1 - const_beta2[group_idx]) * g * g;
-        float m_hat = m / (1 - powf(const_beta1[group_idx], step));
-        float v_hat = v / (1 - powf(const_beta2[group_idx], step));
+        float m_hat = m / const_correction1[group_idx];
+        float v_hat = v / const_correction2[group_idx];
 
         params[group_idx][cur_idx] -= const_lr[group_idx] * m_hat /
                                       (sqrtf(v_hat) + const_epsilon[group_idx]);
@@ -291,10 +293,23 @@ void customized_fused_adam_update(
         cumulative += params[i].numel();
         data_point_to_group[i] = cumulative;
     }
-    printf("total_params: %d\n", data_point_to_group[num_params - 1]);
-    printf("tot_num_elems: %ld\n", tot_num_elems);
+
     cudaMemcpyToSymbol(
         const_data_point_to_group, data_point_to_group, num_params * sizeof(int)
+    );
+
+    //precaculate the correction factor
+    float correction1[6];
+    float correction2[6];
+    for (int i = 0; i < num_params; i++) {
+        correction1[i] = 1 - powf(beta_1[i], step);
+        correction2[i] = 1 - powf(beta_2[i], step);
+    }
+    cudaMemcpyToSymbol(
+        const_correction1, correction1, num_params * sizeof(float)
+    );
+    cudaMemcpyToSymbol(
+        const_correction2, correction2, num_params * sizeof(float)
     );
 
     int num_threads = 256;
