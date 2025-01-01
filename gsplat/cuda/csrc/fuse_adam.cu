@@ -209,14 +209,13 @@ __constant__ float const_epsilon[6];
 __constant__ float const_weight_decay[6];
 __constant__ int const_data_point_to_group[6];
 
-template <typename T>
 __global__ void op_customized_fused_adam_kernel(
-    T **params,
-    T **grads,
-    T **moment1,
-    T **moment2,
+    float** params,
+    float** grads,
+    float** moment1,
+    float** moment2,
     int step,
-    int tot_num_elems,
+    long tot_num_elems,
     int num_params
 ) {
 
@@ -238,18 +237,17 @@ __global__ void op_customized_fused_adam_kernel(
             return;
         }
 
-        T g = grads[group_idx][cur_idx];
-        T m = moment1[group_idx][cur_idx];
-        T v = moment2[group_idx][cur_idx];
+        float g = grads[group_idx][cur_idx];
+        float m = moment1[group_idx][cur_idx];
+        float v = moment2[group_idx][cur_idx];
 
         m = const_beta1[group_idx] * m + (1 - const_beta1[group_idx]) * g;
         v = const_beta2[group_idx] * v + (1 - const_beta2[group_idx]) * g * g;
-        T m_hat = m / (1 - powf(const_beta1[group_idx], step));
-        T v_hat = v / (1 - powf(const_beta2[group_idx], step));
-        T update_step = -const_lr[group_idx] * m_hat /
-                        (sqrtf(v_hat) + const_epsilon[group_idx]);
+        float m_hat = m / (1 - powf(const_beta1[group_idx], step));
+        float v_hat = v / (1 - powf(const_beta2[group_idx], step));
 
-        params[group_idx][cur_idx] += update_step;
+        params[group_idx][cur_idx] -= const_lr[group_idx] * m_hat /
+                                      (sqrtf(v_hat) + const_epsilon[group_idx]);
         moment1[group_idx][cur_idx] = m;
         moment2[group_idx][cur_idx] = v;
     }
@@ -314,29 +312,24 @@ void customized_fused_adam_update(
         exp_avg_sq_ptrs[i] = exp_avg_sqs[i].data_ptr<float>();
     }
 
-    std::cout << "Type of param_ptrs.data(): " << typeid(param_ptrs.data()).name() << std::endl;
-    std::cout << "Type of grad_ptrs.data(): " << typeid(grad_ptrs.data()).name() << std::endl;
-    std::cout << "Type of exp_avg_ptrs.data(): " << typeid(exp_avg_ptrs.data()).name() << std::endl;
-    std::cout << "Type of exp_avg_sq_ptrs.data(): " << typeid(exp_avg_sq_ptrs.data()).name() << std::endl;
+    op_customized_fused_adam_kernel<<<num_blocks, num_threads>>>(
+        param_ptrs.data(),
+        grad_ptrs.data(),
+        exp_avg_ptrs.data(),
+        exp_avg_sq_ptrs.data(),
+        step,
+        tot_num_elems,
+        num_params
+    );
 
-//    op_customized_fused_adam_kernel<float><<<num_blocks, num_threads>>>(
-//        param_ptrs.data(),
-//        grad_ptrs.data(),
-//        exp_avg_ptrs.data(),
-//        exp_avg_sq_ptrs.data(),
-//        step,
-//        tot_num_elems,
-//        num_params
-//    );
-//
-//    cudaError_t launchErr = cudaGetLastError();
-//    if (launchErr != cudaSuccess) {
-//        printf("Kernel Launch Error: %s\n", cudaGetErrorString(launchErr));
-//    }
-//
-//    cudaError_t err = cudaDeviceSynchronize();
-//    if (err != cudaSuccess) {
-//        printf("CUDA Error: %s\n", cudaGetErrorString(err));
-//    }
+    cudaError_t launchErr = cudaGetLastError();
+    if (launchErr != cudaSuccess) {
+        printf("Kernel Launch Error: %s\n", cudaGetErrorString(launchErr));
+    }
+
+    cudaError_t err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("CUDA Error: %s\n", cudaGetErrorString(err));
+    }
 }
 } // namespace gsplat
