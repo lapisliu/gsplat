@@ -336,5 +336,10 @@ void customized_fused_adam_update(
     if (err != cudaSuccess) {
         printf("CUDA Error: %s\n", cudaGetErrorString(err));
     }
+
+    cudaFree(d_params);
+    cudaFree(d_grads);
+    cudaFree(d_moment1);
+    cudaFree(d_moment2);
 }
 } // namespace gsplat
