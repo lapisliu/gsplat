@@ -210,10 +210,10 @@ __constant__ float const_weight_decay[6];
 __constant__ int const_data_point_to_group[6];
 
 __global__ void op_customized_fused_adam_kernel(
-    float** params,
-    float** grads,
-    float** moment1,
-    float** moment2,
+    float **params,
+    float **grads,
+    float **moment1,
+    float **moment2,
     int step,
     long tot_num_elems,
     int num_params
@@ -233,7 +233,7 @@ __global__ void op_customized_fused_adam_kernel(
             idx -
             (group_idx == 0 ? 0 : const_data_point_to_group[group_idx - 1]);
 
-        if (cur_idx < 0 || cur_idx >= params[group_idx].size()) {
+        if (cur_idx < 0 ) {
             return;
         }
 
@@ -312,15 +312,20 @@ void customized_fused_adam_update(
         exp_avg_sq_ptrs[i] = exp_avg_sqs[i].data_ptr<float>();
     }
 
+    float **d_params, **d_grads, **d_moment1, **d_moment2;
+    cudaMalloc(&d_params, num_params * sizeof(float *));
+    cudaMalloc(&d_grads, num_params * sizeof(float *));
+    cudaMalloc(&d_moment1, num_params * sizeof(float *));
+    cudaMalloc(&d_moment2, num_params * sizeof(float *));
+    cudaMemcpy(d_params, param_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_grads, grad_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_moment1, exp_avg_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_moment2, exp_avg_sq_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+
     op_customized_fused_adam_kernel<<<num_blocks, num_threads>>>(
-        param_ptrs.data(),
-        grad_ptrs.data(),
-        exp_avg_ptrs.data(),
-        exp_avg_sq_ptrs.data(),
-        step,
-        tot_num_elems,
-        num_params
-    );
+        d_params, d_grads, d_moment1, d_moment2, step, tot_num_elems, num_params
+        );
+
 
     cudaError_t launchErr = cudaGetLastError();
     if (launchErr != cudaSuccess) {
