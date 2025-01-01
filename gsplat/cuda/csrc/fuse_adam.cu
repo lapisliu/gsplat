@@ -315,6 +315,9 @@ void customized_fused_adam_update(
     }
 
     std::cout << "Type of param_ptrs.data(): " << typeid(param_ptrs.data()).name() << std::endl;
+    std::cout << "Type of grad_ptrs.data(): " << typeid(grad_ptrs.data()).name() << std::endl;
+    std::cout << "Type of exp_avg_ptrs.data(): " << typeid(exp_avg_ptrs.data()).name() << std::endl;
+    std::cout << "Type of exp_avg_sq_ptrs.data(): " << typeid(exp_avg_sq_ptrs.data()).name() << std::endl;
 
 //    op_customized_fused_adam_kernel<float><<<num_blocks, num_threads>>>(
 //        param_ptrs.data(),
