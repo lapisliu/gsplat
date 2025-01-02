@@ -243,6 +243,8 @@ __global__ void op_customized_fused_adam_kernel(
         float m = moment1[group_idx][cur_idx];
         float v = moment2[group_idx][cur_idx];
 
+        g += const_weight_decay[group_idx] * params[group_idx][cur_idx];
+
         m = const_beta1[group_idx] * m + (1 - const_beta1[group_idx]) * g;
         v = const_beta2[group_idx] * v + (1 - const_beta2[group_idx]) * g * g;
         float m_hat = m / const_correction1[group_idx];
