@@ -74,11 +74,10 @@ def _update_param_with_optimizer(
             "For fused_adam, optimizers must be a dictionary containing the 'fused' optimizer."
         )
         fused_optimizer = optimizers["fused"]
-        print(fused_optimizer.param_groups)
         optimizer_name_to_group = {
-            group['params'][0].name: i for i, group in enumerate(fused_optimizer.param_groups)
+            group['params'].name: i for i, group in enumerate(fused_optimizer.param_groups)
         }
-        print(optimizer_name_to_group)
+        print(f"optimizer_name_to_group: {optimizer_name_to_group}")
         for name in names:
             param = params[name]
             new_param = param_fn(name, param)
