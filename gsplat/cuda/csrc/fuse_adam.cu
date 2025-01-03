@@ -216,7 +216,6 @@ __global__ void op_customized_fused_adam_kernel(
     float **grads,
     float **moment1,
     float **moment2,
-    int step,
     long tot_num_elems,
     int num_params
 ) {
@@ -228,6 +227,7 @@ __global__ void op_customized_fused_adam_kernel(
         while (idx >= const_data_point_to_group[group_idx]) {
             ++group_idx;
             if (group_idx >= num_params) {
+                printf("group_idx >= num_params\n");
                 return;
             }
         }
@@ -236,6 +236,7 @@ __global__ void op_customized_fused_adam_kernel(
             (group_idx == 0 ? 0 : const_data_point_to_group[group_idx - 1]);
 
         if (cur_idx < 0 ) {
+            printf("cur_idx < 0\n");
             return;
         }
 
@@ -340,7 +341,7 @@ void customized_fused_adam_update(
     cudaMemcpy(d_moment2, exp_avg_sq_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
 
     op_customized_fused_adam_kernel<<<num_blocks, num_threads>>>(
-        d_params, d_grads, d_moment1, d_moment2, step, tot_num_elems, num_params
+        d_params, d_grads, d_moment1, d_moment2, tot_num_elems, num_params
         );
 
 
