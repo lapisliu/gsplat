@@ -256,12 +256,12 @@ def create_splats_with_optimizers(
     # https://arxiv.org/pdf/2402.18824v1
     BS = batch_size * world_size
     if fused_adam:
-        print("Using CustomizedFusedAdam Optimizer")
+        print("Using FusedAdamMultiTensor Optimizer")
         all_params = [
             {"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}
             for name, _, lr in params
         ]
-        optimizer = CustomizedFusedAdam(
+        optimizer = FusedAdamMultiTensor(
             all_params,
             eps=1e-15 / math.sqrt(BS),
             betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
