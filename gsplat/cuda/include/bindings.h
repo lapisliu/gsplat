@@ -508,10 +508,10 @@ void selective_adam_update(
     const uint32_t M);
 
 void fused_adam_init(
-    const float beta1,
-    const float beta2,
-    const float epsilon,
-    const float weight_decay
+    float beta1,
+    float beta2,
+    float epsilon,
+    float weight_decay
 );
 
 void customized_fused_adam_update(
@@ -520,8 +520,8 @@ void customized_fused_adam_update(
     std::vector<torch::Tensor> exp_avgs,
     std::vector<torch::Tensor> exp_avg_sqs,
     std::vector<float> lr,
-    const float correction1,
-    const float correction2
+    float correction1,
+    float correction2
 );
 
 struct TensorInfo {                                               // Total: (6*8+5*4) * T ~ 68 * 60 = 4KB - 16

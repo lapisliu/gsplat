@@ -363,20 +363,20 @@ void customized_fused_adam_update(
 */
 
 //assuming these are the same for all parameters
-__constant__ const float const_beta1;
-__constant__ const float const_beta2;
-__constant__ const float const_correction1;
-__constant__ const float const_correction2;
-__constant__ const float const_epsilon;
-__constant__ const float const_weight_decay;
+__constant__ float const_beta1;
+__constant__ float const_beta2;
+__constant__ float const_correction1;
+__constant__ float const_correction2;
+__constant__ float const_epsilon;
+__constant__ float const_weight_decay;
 
 __constant__ long const_data_point_to_group[6];
 
 void fused_adam_init(
-    const float beta1,
-    const float beta2,
-    const float epsilon,
-    const float weight_decay
+    float beta1,
+    float beta2,
+    float epsilon,
+    float weight_decay
 ) {
     printf("running fused_adam_init\n");
     cudaMemcpyToSymbol(const_beta1, &beta1, sizeof(float));
@@ -439,8 +439,8 @@ void customized_fused_adam_update(
     std::vector<torch::Tensor> exp_avgs,
     std::vector<torch::Tensor> exp_avg_sqs,
     std::vector<float> lr,
-    const float correction1,
-    const float correction2
+    float correction1,
+    float correction2
 ) {
 
     int num_params = params.size();
@@ -451,10 +451,10 @@ void customized_fused_adam_update(
 
     cudaMemcpyToSymbol(const_lr, lr.data(), num_params * sizeof(float));
     cudaMemcpyToSymbol(
-        const_correction1, correction1, num_params * sizeof(float)
+        const_correction1, &correction1, sizeof(float)
     );
     cudaMemcpyToSymbol(
-        const_correction2, correction2, num_params * sizeof(float)
+        const_correction2, &correction2, sizeof(float)
     );
 
     long data_point_to_group[6]; // param[i] belongs to param group j if
