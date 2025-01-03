@@ -273,14 +273,26 @@ def create_splats_with_optimizers(
             else SelectiveAdam if visible_adam
             else torch.optim.Adam
         )
-        optimizers = {
-            name: optimizer_class(
-                [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
-                eps=1e-15 / math.sqrt(BS),
-                betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
-            )
-            for name, _, lr in params
-        }
+        if optimizer_class == torch.optim.Adam:
+            print("Using Adam Optimizer")
+            optimizers = {
+                name: optimizer_class(
+                    [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
+                    eps=1e-15 / math.sqrt(BS),
+                    betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
+                    fused=True,
+                )
+                for name, _, lr in params
+            }
+        else:
+            optimizers = {
+                name: optimizer_class(
+                    [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
+                    eps=1e-15 / math.sqrt(BS),
+                    betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
+                )
+                for name, _, lr in params
+            }
 
     return splats, optimizers
 
