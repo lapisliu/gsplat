@@ -76,19 +76,39 @@ class CustomizedFusedAdam(torch.optim.Adam):
     def __init__(self, params, betas, eps=1e-8, lr=1e-3, weight_decay=0.0):
         super(CustomizedFusedAdam, self).__init__(params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         self.betas = betas
+        self.param_list = []
+        self.grad_list = []
+        self.exp_avg_list = []
+        self.exp_avg_sq_list = []
+        self.lr_list = []
+        self.beta_1_list = []
+        self.beta_2_list = []
+        self.eps_list = []
+        self.weight_decay_list = []
+
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                self.state[p] = {
+                    'step': 0,
+                    'exp_avg': torch.zeros_like(p.data, dtype=p.dtype, device=p.device),
+                    'exp_avg_sq': torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
+                }
 
     def step(self, closure=None):
-        param_list = []
-        grad_list = []
-        exp_avg_list = []
-        exp_avg_sq_list = []
-        lr_list = []
-        beta_1_list = []
-        beta_2_list = []
-        eps_list = []
-        weight_decay_list = []
+        self.param_list.clear()
+        self.grad_list.clear()
+        self.exp_avg_list.clear()
+        self.exp_avg_sq_list.clear()
+        self.lr_list.clear()
+        self.beta_1_list.clear()
+        self.beta_2_list.clear()
+        self.eps_list.clear()
+        self.weight_decay_list.clear()
+
         tot_num_elems = 0
-        step = 0
+        step = self.state[next(iter(self.param_groups[0]["params"]))]["step"] + 1 # assume all groups have the same step
 
         for group in self.param_groups:
             lr = group['lr']
@@ -96,11 +116,11 @@ class CustomizedFusedAdam(torch.optim.Adam):
             epsilon = group['eps']
             weight_decay = group['weight_decay']
 
-            lr_list.append(lr)
-            beta_1_list.append(beta_1)
-            beta_2_list.append(beta_2)
-            eps_list.append(epsilon)
-            weight_decay_list.append(weight_decay)
+            self.lr_list.append(lr)
+            self.beta_1_list.append(beta_1)
+            self.beta_2_list.append(beta_2)
+            self.eps_list.append(epsilon)
+            self.weight_decay_list.append(weight_decay)
 
             assert len(group["params"]) == 1, "more than one tensor in group"
             p = group["params"][0]
@@ -108,28 +128,22 @@ class CustomizedFusedAdam(torch.optim.Adam):
                 continue
 
             state = self.state[p]
-
-            if len(state) == 0:
-                state['step'] = 0
-                state['exp_avg'] = torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
-                state['exp_avg_sq'] = torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
-
             exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
 
             state['step'] += 1
 
-            param_list.append(p.data.contiguous())
-            grad_list.append(p.grad.contiguous())
-            exp_avg_list.append(exp_avg.data.contiguous())
-            exp_avg_sq_list.append(exp_avg_sq.data.contiguous())
-            step = state['step']
+            self.param_list.append(p.data.contiguous())
+            self.grad_list.append(p.grad.contiguous())
+            self.exp_avg_list.append(exp_avg.data.contiguous())
+            self.exp_avg_sq_list.append(exp_avg_sq.data.contiguous())
 
             tot_num_elems += p.numel()
 
         if hasattr(self, 'verbose') and self.verbose:
-            print(f"Launching fused kernel with {tot_num_elems} elements and {len(param_list)} parameters.")
+            print(f"Launching fused kernel with {tot_num_elems} elements and {len(self.param_list)} parameters.")
 
         customized_fused_adam_update(
-            param_list, grad_list, exp_avg_list, exp_avg_sq_list, step,
-            lr_list, beta_1_list, beta_2_list,
-            eps_list, weight_decay_list, tot_num_elems)
+            self.param_list, self.grad_list, self.exp_avg_list, self.exp_avg_sq_list, step,
+            self.lr_list, self.beta_1_list, self.beta_2_list,
+            self.eps_list, self.weight_decay_list, tot_num_elems
+        )

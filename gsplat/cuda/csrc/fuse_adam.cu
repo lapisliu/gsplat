@@ -131,8 +131,6 @@ void FuseAdamStepCUDAMultiTensor(
     for (int i = 0; i < tensor_list[0].size(); i++) {
         total_params += tensor_list[0][i].numel();
     }
-    printf("total_params: %d\n", total_params);
-    printf("tot_num_elems: %ld\n", tot_num_elems);
 
     int num_params = tensor_list[0].size();
     int tot_num_chunks =
@@ -240,19 +238,19 @@ __global__ void op_customized_fused_adam_kernel(
             return;
         }
 
+        float p = params[group_idx][cur_idx];
         float g = grads[group_idx][cur_idx];
         float m = moment1[group_idx][cur_idx];
         float v = moment2[group_idx][cur_idx];
 
-        g += const_weight_decay[group_idx] * params[group_idx][cur_idx];
+        g += const_weight_decay[group_idx] * p;
 
         m = const_beta1[group_idx] * m + (1 - const_beta1[group_idx]) * g;
         v = const_beta2[group_idx] * v + (1 - const_beta2[group_idx]) * g * g;
         float m_hat = m / const_correction1[group_idx];
         float v_hat = v / const_correction2[group_idx];
 
-        params[group_idx][cur_idx] -= const_lr[group_idx] * m_hat /
-                                      (sqrtf(v_hat) + const_epsilon[group_idx]);
+        params[group_idx][cur_idx] = p + (-const_lr[group_idx] * m_hat / (sqrtf(v_hat) + const_epsilon[group_idx]));
         moment1[group_idx][cur_idx] = m;
         moment2[group_idx][cur_idx] = v;
     }
