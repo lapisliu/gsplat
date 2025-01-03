@@ -207,22 +207,22 @@ __constant__ float const_correction1[6];
 __constant__ float const_correction2[6];
 __constant__ float const_epsilon[6];
 __constant__ float const_weight_decay[6];
-__constant__ int const_data_point_to_group[6];
+__constant__ long const_data_point_to_group[6];
 
 __global__ void op_customized_fused_adam_kernel(
     float **params,
     float **grads,
     float **moment1,
     float **moment2,
-    int tot_num_elems,
+    long tot_num_elems,
     int num_params
 ) {
 
     int stride_x = blockDim.x * gridDim.x;
-    for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < tot_num_elems;
+    for (long idx = blockIdx.x * blockDim.x + threadIdx.x; idx < tot_num_elems;
          idx += stride_x) {
         int group_idx = 0;
-#pragma unroll
+
         for (int i = 0; i < num_params; ++i) {
             if (idx < const_data_point_to_group[i]) { //const_data_point_to_group[num_params-1] should be tot_num_elems,
                                                       // so the last group will be handled correctly
@@ -230,9 +230,10 @@ __global__ void op_customized_fused_adam_kernel(
                 break;
             }
         }
-        int cur_idx =
+        int cur_idx = (int) (
             idx -
-            (group_idx == 0 ? 0 : const_data_point_to_group[group_idx - 1]);
+            (group_idx == 0 ? 0 : const_data_point_to_group[group_idx - 1])
+        );
 
         if (cur_idx < 0 ) {
             return;
@@ -285,17 +286,17 @@ void customized_fused_adam_update(
         const_weight_decay, weight_decay.data(), num_params * sizeof(float)
     );
 
-    int data_point_to_group[6]; // param[i] belongs to param group j if
+    long data_point_to_group[6]; // param[i] belongs to param group j if
                                 // data_point_to_group[j-1] <= i <
                                 // data_point_to_group[j]
-    int tot_num_elems = 0;
+    long tot_num_elems = 0;
     for (int i = 0; i < num_params; i++) {
         tot_num_elems += params[i].numel();
         data_point_to_group[i] = tot_num_elems;
     }
 
     cudaMemcpyToSymbol(
-        const_data_point_to_group, data_point_to_group, num_params * sizeof(int)
+        const_data_point_to_group, data_point_to_group, num_params * sizeof(long)
     );
 
     //precaculate the correction factor
@@ -313,7 +314,8 @@ void customized_fused_adam_update(
     );
 
     int num_threads = 256;
-    int num_blocks =  (int)((tot_num_elems + num_threads - 1) / num_threads);
+    int max_grid_size = 65535;
+    int num_blocks =  std::min(max_grid_size,(int)((tot_num_elems + num_threads - 1) / num_threads));
 
     std::vector<float *> param_ptrs(num_params);
     std::vector<float *> grad_ptrs(num_params);
@@ -347,10 +349,10 @@ void customized_fused_adam_update(
         printf("Kernel Launch Error: %s\n", cudaGetErrorString(launchErr));
     }
 
-//    cudaError_t err = cudaDeviceSynchronize();
-//    if (err != cudaSuccess) {
-//        printf("CUDA Error: %s\n", cudaGetErrorString(err));
-//    }
+    cudaError_t err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("CUDA Error: %s\n", cudaGetErrorString(err));
+    }
 
     cudaFree(d_params);
     cudaFree(d_grads);
