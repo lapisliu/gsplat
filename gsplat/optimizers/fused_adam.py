@@ -125,7 +125,6 @@ class CustomizedFusedAdam(torch.optim.Adam):
         # precompute the bias corrections
         correction1 = 1 - self.betas[0] ** step
         correction2 = 1 - self.betas[1] ** step
-        print(f"correct1: {correction1}, correct2: {correction2}")
 
         if hasattr(self, 'verbose') and self.verbose:
             print(f"Launching fused kernel with {len(self.param_list)} parameters.")
