@@ -517,8 +517,7 @@ void customized_fused_adam_update(
     std::vector<float> beta_1,
     std::vector<float> beta_2,
     std::vector<float> epsilon,
-    std::vector<float> weight_decay,
-    long tot_num_elems);
+    std::vector<float> weight_decay);
 
 struct TensorInfo {                                               // Total: (6*8+5*4) * T ~ 68 * 60 = 4KB - 16
     float* param_addr[MAX_NUM_PARAMS_PER_CHUNK];

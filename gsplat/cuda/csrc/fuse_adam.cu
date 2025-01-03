@@ -214,7 +214,7 @@ __global__ void op_customized_fused_adam_kernel(
     float **grads,
     float **moment1,
     float **moment2,
-    long tot_num_elems,
+    int tot_num_elems,
     int num_params
 ) {
 
@@ -222,11 +222,12 @@ __global__ void op_customized_fused_adam_kernel(
     for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < tot_num_elems;
          idx += stride_x) {
         int group_idx = 0;
-        while (idx >= const_data_point_to_group[group_idx]) {
-            ++group_idx;
-            if (group_idx >= num_params) {
-                printf("group_idx >= num_params\n");
-                return;
+#pragma unroll
+        for (int i = 0; i < num_params; ++i) {
+            if (idx < const_data_point_to_group[i]) { //const_data_point_to_group[num_params-1] should be tot_num_elems,
+                                                      // so the last group will be handled correctly
+                group_idx = i;
+                break;
             }
         }
         int cur_idx =
@@ -234,7 +235,6 @@ __global__ void op_customized_fused_adam_kernel(
             (group_idx == 0 ? 0 : const_data_point_to_group[group_idx - 1]);
 
         if (cur_idx < 0 ) {
-            printf("cur_idx < 0\n");
             return;
         }
 
@@ -267,7 +267,6 @@ void customized_fused_adam_update(
     std::vector<float> beta_2,
     std::vector<float> epsilon,
     std::vector<float> weight_decay,
-    long tot_num_elems
 ) {
 
     int num_params = params.size();
@@ -289,10 +288,10 @@ void customized_fused_adam_update(
     int data_point_to_group[6]; // param[i] belongs to param group j if
                                 // data_point_to_group[j-1] <= i <
                                 // data_point_to_group[j]
-    int cumulative = 0;
+    int tot_num_elems = 0;
     for (int i = 0; i < num_params; i++) {
-        cumulative += params[i].numel();
-        data_point_to_group[i] = cumulative;
+        tot_num_elems += params[i].numel();
+        data_point_to_group[i] = tot_num_elems;
     }
 
     cudaMemcpyToSymbol(

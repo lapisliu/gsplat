@@ -97,7 +97,6 @@ class CustomizedFusedAdam(torch.optim.Adam):
         self.eps_list.clear()
         self.weight_decay_list.clear()
 
-        tot_num_elems = 0
         step = 0
 
         for group in self.param_groups:
@@ -132,13 +131,11 @@ class CustomizedFusedAdam(torch.optim.Adam):
             self.exp_avg_list.append(exp_avg.data.contiguous())
             self.exp_avg_sq_list.append(exp_avg_sq.data.contiguous())
 
-            tot_num_elems += p.numel()
-
         if hasattr(self, 'verbose') and self.verbose:
-            print(f"Launching fused kernel with {tot_num_elems} elements and {len(self.param_list)} parameters.")
+            print(f"Launching fused kernel with {len(self.param_list)} parameters.")
 
         customized_fused_adam_update(
             self.param_list, self.grad_list, self.exp_avg_list, self.exp_avg_sq_list, step,
             self.lr_list, self.beta_1_list, self.beta_2_list,
-            self.eps_list, self.weight_decay_list, tot_num_elems
+            self.eps_list, self.weight_decay_list
         )
