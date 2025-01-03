@@ -347,10 +347,10 @@ void customized_fused_adam_update(
         printf("Kernel Launch Error: %s\n", cudaGetErrorString(launchErr));
     }
 
-    cudaError_t err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-        printf("CUDA Error: %s\n", cudaGetErrorString(err));
-    }
+//    cudaError_t err = cudaDeviceSynchronize();
+//    if (err != cudaSuccess) {
+//        printf("CUDA Error: %s\n", cudaGetErrorString(err));
+//    }
 
     cudaFree(d_params);
     cudaFree(d_grads);
