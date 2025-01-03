@@ -86,16 +86,6 @@ class CustomizedFusedAdam(torch.optim.Adam):
         self.eps_list = []
         self.weight_decay_list = []
 
-        for group in self.param_groups:
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-                self.state[p] = {
-                    'step': 0,
-                    'exp_avg': torch.zeros_like(p.data, dtype=p.dtype, device=p.device),
-                    'exp_avg_sq': torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
-                }
-
     def step(self, closure=None):
         self.param_list.clear()
         self.grad_list.clear()
@@ -128,8 +118,12 @@ class CustomizedFusedAdam(torch.optim.Adam):
                 continue
 
             state = self.state[p]
-            exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
+            if len(state) == 0:
+                state['step'] = 0
+                state['exp_avg'] = torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
+                state['exp_avg_sq'] = torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
 
+            exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
             state['step'] += 1
             step = state['step']
 
