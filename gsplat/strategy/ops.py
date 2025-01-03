@@ -60,7 +60,7 @@ def _update_param_with_optimizer(
         optimizer_fn: A function that takes the key of the optimizer state and the state value,
             and returns the new state value.
         params: A dictionary of parameters.
-        optimizers: A dictionary of optimizers.
+        optimizers: A dictionary of optimizers. Or a single optimizer for fused optimizer.
         names: A list of key names to update. If None, update all. Default: None.
     """
     if names is None:
@@ -74,24 +74,22 @@ def _update_param_with_optimizer(
             "For fused_adam, optimizers must be a dictionary containing the 'fused' optimizer."
         )
         fused_optimizer = optimizers["fused"]
-        for param_group in fused_optimizer.param_groups:
-            for param in param_group["params"]:
-                name = next(
-                    key for key, value in params.items() if value is param
-                )
-                if name in names:
-                    new_param = param_fn(name, param)
-                    params[name] = new_param
+        for group in fused_optimizer.param_groups:
+            assert len(group['params']) == 1, "more than one tensor in group"
+            optimizer_param = group['params'][0]
+            optimizer_param_name = optimizer_param.name
+            if optimizer_param_name in names:
+                param = params[optimizer_param_name]
+                new_param = param_fn(optimizer_param_name, param)
+                params[optimizer_param_name] = new_param
 
-                    param_state = fused_optimizer.state[param]
-                    del fused_optimizer.state[param]
-                    for key, value in param_state.items():
-                        if key != "step":
-                            param_state[key] = optimizer_fn(key, value)
-                    param_group["params"] = [
-                        new_param if p is param else p for p in param_group["params"]
-                    ]
-                    fused_optimizer.state[new_param] = param_state
+                param_state = fused_optimizer.state[optimizer_param]
+                del fused_optimizer.state[optimizer_param]
+                for key, value in param_state.items():
+                    if key != "step":
+                        param_state[key] = optimizer_fn(key, value)
+                optimizer_param.data = new_param
+                fused_optimizer.state[new_param] = param_state
     else:
         for name in names:
             param = params[name]
