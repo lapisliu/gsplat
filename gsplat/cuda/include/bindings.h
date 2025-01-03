@@ -520,8 +520,7 @@ void customized_fused_adam_update(
     std::vector<torch::Tensor> exp_avgs,
     std::vector<torch::Tensor> exp_avg_sqs,
     std::vector<float> lr,
-    float correction1,
-    float correction2
+    int step
 );
 
 struct TensorInfo {                                               // Total: (6*8+5*4) * T ~ 68 * 60 = 4KB - 16

@@ -365,12 +365,17 @@ void customized_fused_adam_update(
 //assuming these are the same for all parameters
 __constant__ float const_beta1;
 __constant__ float const_beta2;
-__constant__ float const_correction1;
+__constant__ float const_correction1; //precomputed the bias corrections
 __constant__ float const_correction2;
 __constant__ float const_epsilon;
 __constant__ float const_weight_decay;
 
 __constant__ long const_data_point_to_group[6];
+
+float fused_adam_kernel_beta1;
+float fused_adam_kernel_beta2;
+float fused_adam_kernel_prev_correction1;
+float fused_adam_kernel_prev_correction2;
 
 void fused_adam_init(
     float beta1,
@@ -383,6 +388,16 @@ void fused_adam_init(
     cudaMemcpyToSymbol(const_beta2, &beta2, sizeof(float));
     cudaMemcpyToSymbol(const_epsilon, &epsilon, sizeof(float));
     cudaMemcpyToSymbol(const_weight_decay, &weight_decay, sizeof(float));
+    fused_adam_kernel_beta1 = beta1;
+    fused_adam_kernel_beta2 = beta2;
+    fused_adam_kernel_prev_correction1 = 1 - beta1;
+    fused_adam_kernel_prev_correction2 = 1 - beta2;
+    cudaMemcpyToSymbol(
+            const_correction1, &fused_adam_kernel_prev_correction1, sizeof(float)
+    );
+    cudaMemcpyToSymbol(
+            const_correction2, &fused_adam_kernel_prev_correction2, sizeof(float)
+    );
 }
 
 __global__ void op_customized_fused_adam_kernel(
@@ -439,8 +454,7 @@ void customized_fused_adam_update(
     std::vector<torch::Tensor> exp_avgs,
     std::vector<torch::Tensor> exp_avg_sqs,
     std::vector<float> lr,
-    float correction1,
-    float correction2
+    int step
 ) {
 
     int num_params = params.size();
@@ -450,12 +464,18 @@ void customized_fused_adam_update(
     }
 
     cudaMemcpyToSymbol(const_lr, lr.data(), num_params * sizeof(float));
-    cudaMemcpyToSymbol(
-        const_correction1, &correction1, sizeof(float)
-    );
-    cudaMemcpyToSymbol(
-        const_correction2, &correction2, sizeof(float)
-    );
+    if(fused_adam_kernel_prev_correction1 != 1.0) {
+        fused_adam_kernel_prev_correction1 = (1.0 - powf(fused_adam_kernel_beta1, step));
+        cudaMemcpyToSymbol(
+            const_correction1, &fused_adam_kernel_prev_correction1, sizeof(float)
+        );
+    }
+    if(fused_adam_kernel_prev_correction2 != 1.0) {
+        fused_adam_kernel_prev_correction2 = (1.0 - powf(fused_adam_kernel_beta2, step));
+        cudaMemcpyToSymbol(
+            const_correction2, &fused_adam_kernel_prev_correction2, sizeof(float)
+        );
+    }
 
     long data_point_to_group[6]; // param[i] belongs to param group j if
                                  // data_point_to_group[j-1] <= i < data_point_to_group[j]

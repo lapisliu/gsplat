@@ -122,14 +122,10 @@ class CustomizedFusedAdam(torch.optim.Adam):
             self.exp_avg_list.append(exp_avg.data.contiguous())
             self.exp_avg_sq_list.append(exp_avg_sq.data.contiguous())
 
-        # precompute the bias corrections
-        correction1 = 1 - self.betas[0] ** step
-        correction2 = 1 - self.betas[1] ** step
-
         if hasattr(self, 'verbose') and self.verbose:
             print(f"Launching fused kernel with {len(self.param_list)} parameters.")
 
         customized_fused_adam_update(
             self.param_list, self.grad_list, self.exp_avg_list, self.exp_avg_sq_list,
-            self.lr_list, correction1, correction2
+            self.lr_list, step
         )

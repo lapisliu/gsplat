@@ -68,11 +68,10 @@ def customized_fused_adam_update(
         exp_avgs: list,
         exp_avg_sqs: list,
         lr: list,
-        correction1: float,
-        correction2: float,
+        step: int,
 ) -> None:
     _make_lazy_cuda_func("customized_fused_adam_update")(
-        params, grads, exp_avgs, exp_avg_sqs, lr, correction1, correction2
+        params, grads, exp_avgs, exp_avg_sqs, lr, step
     )
 
 
