@@ -74,26 +74,26 @@ def _update_param_with_optimizer(
             "For fused_adam, optimizers must be a dictionary containing the 'fused' optimizer."
         )
         fused_optimizer = optimizers["fused"]
-        for group in fused_optimizer.param_groups:
-            assert len(group['params']) == 1, "more than one tensor in group"
-            optimizer_param_name = group['params'][0].name
-            if optimizer_param_name in names:
-                param = params[optimizer_param_name]
-                new_param = param_fn(optimizer_param_name, param)
-                params[optimizer_param_name] = new_param
-
-                param_state = fused_optimizer.state[param]
-                del fused_optimizer.state[param]
-                for key, value in param_state.items():
-                    if key != "step":
-                        param_state[key] = optimizer_fn(key, value)
-                group['params'] = [new_param]
-                fused_optimizer.state[new_param] = param_state
-            else:
-                assert not group['params'][0].requires_grad, (
-                    f"Optimizer for {optimizer_param_name} is not found, but the parameter is trainable."
-                    f"Got requires_grad={group['params'][0].requires_grad}"
+        optimizer_name_to_group = {
+            group['params'][0].name: i for i, group in enumerate(fused_optimizer.param_groups)
+        }
+        for name in names:
+            param = params[name]
+            new_param = param_fn(name, param)
+            params[name] = new_param
+            if name not in optimizer_name_to_group:
+                assert not param.requires_grad, (
+                    f"Optimizer for {name} is not found, but the parameter is trainable."
+                    f"Got requires_grad={param.requires_grad}"
                 )
+                continue
+            group_idx = optimizer_name_to_group[name]
+            param_state = fused_optimizer.state[param]
+            for key, value in param_state.items():
+                if key != "step":
+                    param_state[key] = optimizer_fn(key, value)
+            fused_optimizer.param_groups[group_idx]["params"] = [new_param]
+            fused_optimizer.state[new_param] = param_state
     else:
         for name in names:
             param = params[name]
