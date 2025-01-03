@@ -363,12 +363,12 @@ void customized_fused_adam_update(
 */
 
 //assuming these are the same for all parameters
-__constant__ float const_beta1;
-__constant__ float const_beta2;
-__constant__ float const_correction1;
-__constant__ float const_correction2;
-__constant__ float const_epsilon;
-__constant__ float const_weight_decay;
+__constant__ const float const_beta1;
+__constant__ const float const_beta2;
+__constant__ const float const_correction1;
+__constant__ const float const_correction2;
+__constant__ const float const_epsilon;
+__constant__ const float const_weight_decay;
 
 __constant__ long const_data_point_to_group[6];
 
