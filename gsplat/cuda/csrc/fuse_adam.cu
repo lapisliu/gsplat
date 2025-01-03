@@ -266,7 +266,7 @@ void customized_fused_adam_update(
     std::vector<float> beta_1,
     std::vector<float> beta_2,
     std::vector<float> epsilon,
-    std::vector<float> weight_decay,
+    std::vector<float> weight_decay
 ) {
 
     int num_params = params.size();
