@@ -87,7 +87,7 @@ class CustomizedFusedAdam(torch.optim.Adam):
         self.weight_decay_list = []
 
         for group in self.param_groups:
-            for p in group["params"]:
+            for p in group['params']:
                 if p.grad is None:
                     continue
                 self.state[p] = {
@@ -108,7 +108,7 @@ class CustomizedFusedAdam(torch.optim.Adam):
         self.weight_decay_list.clear()
 
         tot_num_elems = 0
-        step = self.state[next(iter(self.param_groups[0]["params"]))]["step"] + 1 # assume all groups have the same step
+        step = 0
 
         for group in self.param_groups:
             lr = group['lr']
@@ -122,8 +122,8 @@ class CustomizedFusedAdam(torch.optim.Adam):
             self.eps_list.append(epsilon)
             self.weight_decay_list.append(weight_decay)
 
-            assert len(group["params"]) == 1, "more than one tensor in group"
-            p = group["params"][0]
+            assert len(group['params']) == 1, "more than one tensor in group"
+            p = group['params'][0]
             if p.grad is None:
                 continue
 
@@ -131,6 +131,7 @@ class CustomizedFusedAdam(torch.optim.Adam):
             exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
 
             state['step'] += 1
+            step = state['step']
 
             self.param_list.append(p.data.contiguous())
             self.grad_list.append(p.grad.contiguous())
