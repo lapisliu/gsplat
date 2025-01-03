@@ -11,6 +11,7 @@ import nerfview
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torch.cuda.nvtx as nvtx
 import tqdm
 import tyro
 import viser
@@ -779,12 +780,14 @@ class Runner:
                     visibility_mask = (info["radii"] > 0).any(0)
 
             # optimize
+            nvtx.range_push("Optimizer Step with Custom Kernel")
             for optimizer in self.optimizers.values():
                 if cfg.visible_adam:
                     optimizer.step(visibility_mask)
                 else:
                     optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
+            nvtx.range_pop()
             for optimizer in self.pose_optimizers:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)

@@ -315,7 +315,7 @@ void customized_fused_adam_update(
     );
 
     int num_threads = 256;
-    int num_blocks = std::min(1024, (int)(tot_num_elems + num_threads - 1) / num_threads);
+    int num_blocks =  (int)((tot_num_elems + num_threads - 1) / num_threads);
 
     std::vector<float *> param_ptrs(num_params);
     std::vector<float *> grad_ptrs(num_params);
