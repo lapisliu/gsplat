@@ -76,20 +76,24 @@ def _update_param_with_optimizer(
         fused_optimizer = optimizers["fused"]
         for group in fused_optimizer.param_groups:
             assert len(group['params']) == 1, "more than one tensor in group"
-            optimizer_param = group['params'][0]
-            optimizer_param_name = optimizer_param.name
+            optimizer_param_name = group['params'][0].name
             if optimizer_param_name in names:
                 param = params[optimizer_param_name]
                 new_param = param_fn(optimizer_param_name, param)
                 params[optimizer_param_name] = new_param
 
-                param_state = fused_optimizer.state[optimizer_param]
-                del fused_optimizer.state[optimizer_param]
+                param_state = fused_optimizer.state[param]
+                del fused_optimizer.state[param]
                 for key, value in param_state.items():
                     if key != "step":
                         param_state[key] = optimizer_fn(key, value)
-                optimizer_param.data = new_param
+                group['params'] = [new_param]
                 fused_optimizer.state[new_param] = param_state
+            else:
+                assert not group['params'][0].requires_grad, (
+                    f"Optimizer for {optimizer_param_name} is not found, but the parameter is trainable."
+                    f"Got requires_grad={group['params'][0].requires_grad}"
+                )
     else:
         for name in names:
             param = params[name]
