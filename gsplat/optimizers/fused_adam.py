@@ -1,5 +1,5 @@
 import torch
-from ..cuda._wrapper import fuse_adam_step_multi_tensor, customized_fused_adam_update
+from ..cuda._wrapper import fuse_adam_step_multi_tensor, customized_fused_adam_update, fused_adam_init
 
 
 class FusedAdamMultiTensor(torch.optim.Optimizer):
@@ -76,15 +76,17 @@ class CustomizedFusedAdam(torch.optim.Adam):
     def __init__(self, params, betas, eps=1e-8, lr=1e-3, weight_decay=0.0):
         super(CustomizedFusedAdam, self).__init__(params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         self.betas = betas
+        self.eps = eps
+        self.weight_decay = weight_decay
         self.param_list = []
         self.grad_list = []
         self.exp_avg_list = []
         self.exp_avg_sq_list = []
         self.lr_list = []
-        self.beta_1_list = []
-        self.beta_2_list = []
-        self.eps_list = []
-        self.weight_decay_list = []
+
+        # assume all groups have the same betas, eps, and weight_decay, and they don't change
+        # init the values to kernel
+        fused_adam_init(betas[0], betas[1], eps, weight_decay)
 
     def step(self, closure=None):
         self.param_list.clear()
@@ -92,24 +94,13 @@ class CustomizedFusedAdam(torch.optim.Adam):
         self.exp_avg_list.clear()
         self.exp_avg_sq_list.clear()
         self.lr_list.clear()
-        self.beta_1_list.clear()
-        self.beta_2_list.clear()
-        self.eps_list.clear()
-        self.weight_decay_list.clear()
 
         step = 0
 
         for group in self.param_groups:
             lr = group['lr']
-            beta_1, beta_2 = group['betas']
-            epsilon = group['eps']
-            weight_decay = group['weight_decay']
 
             self.lr_list.append(lr)
-            self.beta_1_list.append(beta_1)
-            self.beta_2_list.append(beta_2)
-            self.eps_list.append(epsilon)
-            self.weight_decay_list.append(weight_decay)
 
             assert len(group['params']) == 1, "more than one tensor in group"
             p = group['params'][0]
@@ -131,11 +122,15 @@ class CustomizedFusedAdam(torch.optim.Adam):
             self.exp_avg_list.append(exp_avg.data.contiguous())
             self.exp_avg_sq_list.append(exp_avg_sq.data.contiguous())
 
+        # precompute the bias corrections
+        correction1 = 1 - self.betas[0] ** step
+        correction2 = 1 - self.betas[1] ** step
+        print(f"correct1: {correction1}, correct2: {correction2}")
+
         if hasattr(self, 'verbose') and self.verbose:
             print(f"Launching fused kernel with {len(self.param_list)} parameters.")
 
         customized_fused_adam_update(
-            self.param_list, self.grad_list, self.exp_avg_list, self.exp_avg_sq_list, step,
-            self.lr_list, self.beta_1_list, self.beta_2_list,
-            self.eps_list, self.weight_decay_list
+            self.param_list, self.grad_list, self.exp_avg_list, self.exp_avg_sq_list,
+            self.lr_list, correction1, correction2
         )

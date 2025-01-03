@@ -201,6 +201,7 @@ void FuseAdamStepCUDAMultiTensor(
 
 __constant__ float const_lr[6]; // Assuming the number of parameters (groups) is
                                 // less than or equal to 6
+/*
 __constant__ float const_beta1[6];
 __constant__ float const_beta2[6];
 __constant__ float const_correction1[6];
@@ -359,4 +360,160 @@ void customized_fused_adam_update(
     cudaFree(d_moment1);
     cudaFree(d_moment2);
 }
+*/
+
+//assuming these are the same for all parameters
+__constant__ float const_beta1;
+__constant__ float const_beta2;
+__constant__ float const_correction1;
+__constant__ float const_correction2;
+__constant__ float const_epsilon;
+__constant__ float const_weight_decay;
+
+__constant__ long const_data_point_to_group[6];
+
+void fused_adam_init(
+    const float beta1,
+    const float beta2,
+    const float epsilon,
+    const float weight_decay
+) {
+    printf("running fused_adam_init\n");
+    cudaMemcpyToSymbol(const_beta1, &beta1, sizeof(float));
+    cudaMemcpyToSymbol(const_beta2, &beta2, sizeof(float));
+    cudaMemcpyToSymbol(const_epsilon, &epsilon, sizeof(float));
+    cudaMemcpyToSymbol(const_weight_decay, &weight_decay, sizeof(float));
+}
+
+__global__ void op_customized_fused_adam_kernel(
+    float **params,
+    float **grads,
+    float **moment1,
+    float **moment2,
+    long tot_num_elems,
+    int num_params
+) {
+
+    int stride_x = blockDim.x * gridDim.x;
+    for (long idx = blockIdx.x * blockDim.x + threadIdx.x; idx < tot_num_elems;
+         idx += stride_x) {
+        int group_idx = 0; //optimize: move this to the outer loop
+
+        for (int i = 0; i < num_params; ++i) {
+            if (idx < const_data_point_to_group[i]) { //const_data_point_to_group[num_params-1] should be tot_num_elems,
+                                                      // so the last group will be handled correctly
+                group_idx = i;
+                break;
+            }
+        }
+        int cur_idx = (int) (
+            idx -
+            (group_idx == 0 ? 0 : const_data_point_to_group[group_idx - 1])
+        );
+
+        if (cur_idx < 0 ) {
+            return;
+        }
+
+        float p = params[group_idx][cur_idx];
+        float g = grads[group_idx][cur_idx];
+        float m = moment1[group_idx][cur_idx];
+        float v = moment2[group_idx][cur_idx];
+
+        g += const_weight_decay * p;
+
+        m = const_beta1 * m + (1 - const_beta1) * g;
+        v = const_beta2 * v + (1 - const_beta2) * g * g;
+        float m_hat = m / const_correction1;
+        float v_hat = v / const_correction2;
+
+        params[group_idx][cur_idx] = p + (-const_lr[group_idx] * m_hat / (sqrtf(v_hat) + const_epsilon));
+        moment1[group_idx][cur_idx] = m;
+        moment2[group_idx][cur_idx] = v;
+    }
+}
+
+void customized_fused_adam_update(
+    std::vector<torch::Tensor> params,
+    std::vector<torch::Tensor> grads,
+    std::vector<torch::Tensor> exp_avgs,
+    std::vector<torch::Tensor> exp_avg_sqs,
+    std::vector<float> lr,
+    const float correction1,
+    const float correction2
+) {
+
+    int num_params = params.size();
+    if (num_params > 6) {
+        printf("The number of parameters should be less than or equal to 6\n");
+        return;
+    }
+
+    cudaMemcpyToSymbol(const_lr, lr.data(), num_params * sizeof(float));
+    cudaMemcpyToSymbol(
+        const_correction1, correction1, num_params * sizeof(float)
+    );
+    cudaMemcpyToSymbol(
+        const_correction2, correction2, num_params * sizeof(float)
+    );
+
+    long data_point_to_group[6]; // param[i] belongs to param group j if
+                                 // data_point_to_group[j-1] <= i < data_point_to_group[j]
+    long tot_num_elems = 0;
+    for (int i = 0; i < num_params; i++) {
+        tot_num_elems += params[i].numel();
+        data_point_to_group[i] = tot_num_elems;
+    }
+    cudaMemcpyToSymbol(
+        const_data_point_to_group, data_point_to_group, num_params * sizeof(long)
+    );
+
+
+    int num_threads = 256;
+    int max_grid_size = 65535;
+    int num_blocks =  std::min(max_grid_size,(int)((tot_num_elems + num_threads - 1) / num_threads));
+
+    std::vector<float *> param_ptrs(num_params);
+    std::vector<float *> grad_ptrs(num_params);
+    std::vector<float *> exp_avg_ptrs(num_params);
+    std::vector<float *> exp_avg_sq_ptrs(num_params);
+
+    for (int i = 0; i < num_params; i++) {
+        param_ptrs[i] = params[i].data_ptr<float>();
+        grad_ptrs[i] = grads[i].data_ptr<float>();
+        exp_avg_ptrs[i] = exp_avgs[i].data_ptr<float>();
+        exp_avg_sq_ptrs[i] = exp_avg_sqs[i].data_ptr<float>();
+    }
+
+    float **d_params, **d_grads, **d_moment1, **d_moment2;
+    cudaMalloc(&d_params, num_params * sizeof(float *));
+    cudaMalloc(&d_grads, num_params * sizeof(float *));
+    cudaMalloc(&d_moment1, num_params * sizeof(float *));
+    cudaMalloc(&d_moment2, num_params * sizeof(float *));
+    cudaMemcpy(d_params, param_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_grads, grad_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_moment1, exp_avg_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_moment2, exp_avg_sq_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+
+    op_customized_fused_adam_kernel<<<num_blocks, num_threads>>>(
+        d_params, d_grads, d_moment1, d_moment2, tot_num_elems, num_params
+    );
+
+
+    cudaError_t launchErr = cudaGetLastError();
+    if (launchErr != cudaSuccess) {
+        printf("Kernel Launch Error: %s\n", cudaGetErrorString(launchErr));
+    }
+
+    cudaError_t err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("CUDA Error: %s\n", cudaGetErrorString(err));
+    }
+
+    cudaFree(d_params);
+    cudaFree(d_grads);
+    cudaFree(d_moment1);
+    cudaFree(d_moment2);
+}
+
 } // namespace gsplat

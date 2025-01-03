@@ -51,20 +51,28 @@ def fuse_adam_step_multi_tensor(
     )
 
 
+def fused_adam_init(
+        beta1: float,
+        beta2: float,
+        epsilon: float,
+        weight_decay: float,
+) -> None:
+    _make_lazy_cuda_func("fused_adam_init")(
+        beta1, beta2, epsilon, weight_decay
+    )
+
+
 def customized_fused_adam_update(
         params: list,
         grads: list,
         exp_avgs: list,
         exp_avg_sqs: list,
-        step: int,
         lr: list,
-        beta1: list,
-        beta2: list,
-        eps: list,
-        weight_decay: list,
+        correction1: float,
+        correction2: float,
 ) -> None:
     _make_lazy_cuda_func("customized_fused_adam_update")(
-        params, grads, exp_avgs, exp_avg_sqs, step, lr, beta1, beta2, eps, weight_decay
+        params, grads, exp_avgs, exp_avg_sqs, lr, correction1, correction2
     )
 
 
