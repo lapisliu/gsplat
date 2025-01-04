@@ -77,7 +77,6 @@ def _update_param_with_optimizer(
         optimizer_name_to_group = {
             group['name']: i for i, group in enumerate(fused_optimizer.param_groups)
         }
-        print(f"optimizer_name_to_group: {optimizer_name_to_group}")
         for name in names:
             param = params[name]
             new_param = param_fn(name, param)
@@ -90,6 +89,7 @@ def _update_param_with_optimizer(
                 continue
             group_idx = optimizer_name_to_group[name]
             param_state = fused_optimizer.state[param]
+            del fused_optimizer.state[param]
             for key, value in param_state.items():
                 if key != "step":
                     param_state[key] = optimizer_fn(key, value)
