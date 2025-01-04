@@ -514,6 +514,8 @@ void customized_fused_adam_update(
         const_data_point_to_group, data_point_to_group, num_params * sizeof(long)
     );
 
+    printf("total number of elements: %ld\n", tot_num_elems);
+    printf("num_params: %d\n", num_params);
 
     int num_threads = 256;
     int max_grid_size = 65535;
@@ -536,6 +538,7 @@ void customized_fused_adam_update(
     cudaMemcpy(fused_adam_kernel_d_moment1, exp_avg_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
     cudaMemcpy(fused_adam_kernel_d_moment2, exp_avg_sq_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
 
+    printf("num_blocks: %d, num_threads: %d\n", num_blocks, num_threads);
     op_customized_fused_adam_kernel<<<num_blocks, num_threads>>>(
         fused_adam_kernel_d_params, fused_adam_kernel_d_grads, fused_adam_kernel_d_moment1, fused_adam_kernel_d_moment2, tot_num_elems, num_params
     );
