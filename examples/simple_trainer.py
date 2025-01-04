@@ -811,6 +811,12 @@ class Runner:
                 optimizer.zero_grad(set_to_none=True)
             for scheduler in schedulers:
                 scheduler.step()
+            if cfg.fused_adam:
+                # update the "means" param's lr in the fused optimizer
+                fused_optimizer = self.optimizers["fused"]
+                for param_group in fused_optimizer.param_groups:
+                    if param_group["name"] == "means":
+                        param_group["lr"] = param_group["lr"] * (0.01 ** (1.0 / max_steps))
 
             # Run post-backward steps after backward and optimizer
             if isinstance(self.cfg.strategy, DefaultStrategy):
