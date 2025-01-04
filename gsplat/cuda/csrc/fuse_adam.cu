@@ -403,7 +403,7 @@ void fused_adam_init(
     cudaMalloc(&fused_adam_kernel_d_params, 6 * sizeof(float *));
     cudaMalloc(&fused_adam_kernel_d_grads, 6 * sizeof(float *));
     cudaMalloc(&fused_adam_kernel_d_moment1, 6 * sizeof(float *));
-    cudaMalloc(&fused_adam_kernel_d_moment2, 6 * sizeof(float *);
+    cudaMalloc(&fused_adam_kernel_d_moment2, 6 * sizeof(float *));
 }
 
 void fused_adam_free() {
