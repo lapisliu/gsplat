@@ -377,6 +377,8 @@ float fused_adam_kernel_beta2;
 float fused_adam_kernel_prev_correction1;
 float fused_adam_kernel_prev_correction2;
 
+float **fused_adam_kernel_d_params, **fused_adam_kernel_d_grads, **fused_adam_kernel_d_moment1, **fused_adam_kernel_d_moment2;
+
 void fused_adam_init(
     float beta1,
     float beta2,
@@ -398,6 +400,17 @@ void fused_adam_init(
     cudaMemcpyToSymbol(
             const_correction2, &fused_adam_kernel_prev_correction2, sizeof(float)
     );
+    cudaMalloc(&fused_adam_kernel_d_params, 6 * sizeof(float *));
+    cudaMalloc(&fused_adam_kernel_d_grads, 6 * sizeof(float *));
+    cudaMalloc(&fused_adam_kernel_d_moment1, 6 * sizeof(float *));
+    cudaMalloc(&fused_adam_kernel_d_moment2, 6 * sizeof(float *);
+}
+
+void fused_adam_free() {
+    cudaFree(fused_adam_kernel_d_params);
+    cudaFree(fused_adam_kernel_d_grads);
+    cudaFree(fused_adam_kernel_d_moment1);
+    cudaFree(fused_adam_kernel_d_moment2);
 }
 
 __global__ void op_customized_fused_adam_kernel(
@@ -408,6 +421,20 @@ __global__ void op_customized_fused_adam_kernel(
     long tot_num_elems,
     int num_params
 ) {
+    __shared__ float *shared_params[6];
+    __shared__ float *shared_grads[6];
+    __shared__ float *shared_moment1[6];
+    __shared__ float *shared_moment2[6];
+
+    if (threadIdx.x == 0) {
+        for (int i = 0; i < num_params; ++i) {
+            shared_params[i] = params[i];
+            shared_grads[i] = grads[i];
+            shared_moment1[i] = moment1[i];
+            shared_moment2[i] = moment2[i];
+        }
+    }
+    __syncthreads();
 
     int stride_x = blockDim.x * gridDim.x;
     int group_idx = 0;
@@ -415,25 +442,24 @@ __global__ void op_customized_fused_adam_kernel(
          idx += stride_x) {
 
         for (int i = group_idx; i < num_params; ++i) {
-            if (idx < const_data_point_to_group[i]) { //const_data_point_to_group[num_params-1] should be tot_num_elems,
-                                                      // so the last group will be handled correctly
+            if (idx < const_data_point_to_group[i]) {
                 group_idx = i;
                 break;
             }
         }
-        int cur_idx = (int) (
+        int cur_idx = (int)(
             idx -
             (group_idx == 0 ? 0 : const_data_point_to_group[group_idx - 1])
         );
 
-        if (cur_idx < 0 ) {
+        if (cur_idx < 0) {
             return;
         }
 
-        float p = params[group_idx][cur_idx];
-        float g = grads[group_idx][cur_idx];
-        float m = moment1[group_idx][cur_idx];
-        float v = moment2[group_idx][cur_idx];
+        float p = shared_params[group_idx][cur_idx];
+        float g = shared_grads[group_idx][cur_idx];
+        float m = shared_moment1[group_idx][cur_idx];
+        float v = shared_moment2[group_idx][cur_idx];
 
         g += const_weight_decay * p;
 
@@ -442,9 +468,9 @@ __global__ void op_customized_fused_adam_kernel(
         float m_hat = m / const_correction1;
         float v_hat = v / const_correction2;
 
-        params[group_idx][cur_idx] = p + (-const_lr[group_idx] * m_hat / (sqrtf(v_hat) + const_epsilon));
-        moment1[group_idx][cur_idx] = m;
-        moment2[group_idx][cur_idx] = v;
+        shared_params[group_idx][cur_idx] = p + (-const_lr[group_idx] * m_hat / (sqrtf(v_hat) + const_epsilon));
+        shared_moment1[group_idx][cur_idx] = m;
+        shared_moment2[group_idx][cur_idx] = v;
     }
 }
 
@@ -505,18 +531,13 @@ void customized_fused_adam_update(
         exp_avg_sq_ptrs[i] = exp_avg_sqs[i].data_ptr<float>();
     }
 
-    float **d_params, **d_grads, **d_moment1, **d_moment2;
-    cudaMalloc(&d_params, num_params * sizeof(float *));
-    cudaMalloc(&d_grads, num_params * sizeof(float *));
-    cudaMalloc(&d_moment1, num_params * sizeof(float *));
-    cudaMalloc(&d_moment2, num_params * sizeof(float *));
-    cudaMemcpy(d_params, param_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_grads, grad_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_moment1, exp_avg_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_moment2, exp_avg_sq_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+    cudaMemcpy(fused_adam_kernel_d_params, param_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+    cudaMemcpy(fused_adam_kernel_d_grads, grad_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+    cudaMemcpy(fused_adam_kernel_d_moment1, exp_avg_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
+    cudaMemcpy(fused_adam_kernel_d_moment2, exp_avg_sq_ptrs.data(), num_params * sizeof(float *), cudaMemcpyHostToDevice);
 
     op_customized_fused_adam_kernel<<<num_blocks, num_threads>>>(
-        d_params, d_grads, d_moment1, d_moment2, tot_num_elems, num_params
+        fused_adam_kernel_d_params, fused_adam_kernel_d_grads, fused_adam_kernel_d_moment1, fused_adam_kernel_d_moment2, tot_num_elems, num_params
     );
 
 
@@ -529,11 +550,6 @@ void customized_fused_adam_update(
     if (err != cudaSuccess) {
         printf("CUDA Error: %s\n", cudaGetErrorString(err));
     }
-
-    cudaFree(d_params);
-    cudaFree(d_grads);
-    cudaFree(d_moment1);
-    cudaFree(d_moment2);
 }
 
 } // namespace gsplat

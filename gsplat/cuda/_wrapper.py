@@ -62,6 +62,10 @@ def fused_adam_init(
     )
 
 
+def fused_adam_free() -> None:
+    _make_lazy_cuda_func("fused_adam_free")()
+
+
 def customized_fused_adam_update(
         params: list,
         grads: list,

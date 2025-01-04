@@ -1,5 +1,5 @@
 import torch
-from ..cuda._wrapper import fuse_adam_step_multi_tensor, customized_fused_adam_update, fused_adam_init
+from ..cuda._wrapper import fuse_adam_step_multi_tensor, customized_fused_adam_update, fused_adam_init, fused_adam_free
 
 
 class FusedAdamMultiTensor(torch.optim.Optimizer):
@@ -129,3 +129,6 @@ class CustomizedFusedAdam(torch.optim.Adam):
             self.param_list, self.grad_list, self.exp_avg_list, self.exp_avg_sq_list,
             self.lr_list, step
         )
+
+    def __del__(self):
+        fused_adam_free()

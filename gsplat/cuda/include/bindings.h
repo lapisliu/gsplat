@@ -514,6 +514,8 @@ void fused_adam_init(
     float weight_decay
 );
 
+void fused_adam_free();
+
 void customized_fused_adam_update(
     std::vector<torch::Tensor> params,
     std::vector<torch::Tensor> grads,
