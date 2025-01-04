@@ -410,11 +410,11 @@ __global__ void op_customized_fused_adam_kernel(
 ) {
 
     int stride_x = blockDim.x * gridDim.x;
+    int group_idx = 0;
     for (long idx = blockIdx.x * blockDim.x + threadIdx.x; idx < tot_num_elems;
          idx += stride_x) {
-        int group_idx = 0; //optimize: move this to the outer loop
 
-        for (int i = 0; i < num_params; ++i) {
+        for (int i = group_idx; i < num_params; ++i) {
             if (idx < const_data_point_to_group[i]) { //const_data_point_to_group[num_params-1] should be tot_num_elems,
                                                       // so the last group will be handled correctly
                 group_idx = i;
