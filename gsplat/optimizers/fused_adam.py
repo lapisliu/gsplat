@@ -1,64 +1,86 @@
 import torch
+from typing import Dict, Union
 from ..cuda._wrapper import customized_fused_adam_update, fused_adam_init, fused_adam_free
 
 
-class CustomizedFusedAdam(torch.optim.Adam):
-    def __init__(self, params, betas, eps=1e-8, lr=1e-3, weight_decay=0.0):
-        super(CustomizedFusedAdam, self).__init__(params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
-        self.betas = betas
-        self.eps = eps
-        self.weight_decay = weight_decay
+class CustomizedFusedAdam:
+    def __init__(self, betas, eps=1e-8, weight_decay=0.0):
+        """
+        Initializes the fused Adam optimizer with the given parameters.
+        Assumes all groups share the same betas, eps, and weight_decay values.
+        """
         self.param_list = []
         self.grad_list = []
         self.exp_avg_list = []
         self.exp_avg_sq_list = []
         self.lr_list = []
+        self.step_counter = 0
 
-        # assume all groups have the same betas, eps, and weight_decay, and they don't change
-        # init the values to kernel
+        # Initialize kernel values
         fused_adam_init(betas[0], betas[1], eps, weight_decay)
 
-    def step(self, closure=None):
+    def clear_lists(self):
+        """Clears the internal state lists before each optimization step."""
         self.param_list.clear()
         self.grad_list.clear()
         self.exp_avg_list.clear()
         self.exp_avg_sq_list.clear()
         self.lr_list.clear()
 
-        step = 0
-
-        for group in self.param_groups:
+    def process_optimizer(self, optimizer):
+        """
+        Processes a single optimizer to extract parameter data and update the state lists.
+        """
+        for group in optimizer.param_groups:
             lr = group['lr']
-
             self.lr_list.append(lr)
 
-            assert len(group['params']) == 1, "more than one tensor in group"
-            p = group['params'][0]
-            if p.grad is None:
-                continue
+            for param in group['params']:
+                if param.grad is None:
+                    continue
 
-            state = self.state[p]
-            if len(state) == 0:
-                state['step'] = 0
-                state['exp_avg'] = torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
-                state['exp_avg_sq'] = torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
+                state = optimizer.state[param]
+                state['step'] += 1
+                self.step_counter = state['step']
 
-            exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-            state['step'] += 1
-            step = state['step']
+                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
+                self.param_list.append(param.data.contiguous())
+                self.grad_list.append(param.grad.contiguous())
+                self.exp_avg_list.append(exp_avg.contiguous())
+                self.exp_avg_sq_list.append(exp_avg_sq.contiguous())
 
-            self.param_list.append(p.data.contiguous())
-            self.grad_list.append(p.grad.contiguous())
-            self.exp_avg_list.append(exp_avg.data.contiguous())
-            self.exp_avg_sq_list.append(exp_avg_sq.data.contiguous())
+    def step(self, optimizers: Union[Dict[str, torch.optim.Optimizer], torch.optim.Optimizer]):
+        """
+        Performs a single optimization step.
+        Each group in optimizer.param_groups must contain the following keys:
+        - 'lr': float
+        optimizer.state[param] must contain the following keys:
+        - 'step': int
+        - 'exp_avg': torch.Tensor
+        - 'exp_avg_sq': torch.Tensor
+        """
+        self.clear_lists()
 
-        if hasattr(self, 'verbose') and self.verbose:
-            print(f"Launching fused kernel with {len(self.param_list)} parameters.")
+        if isinstance(optimizers, dict):
+            for optimizer in optimizers.values():
+                self.process_optimizer(optimizer)
+        else:
+            self.process_optimizer(optimizers)
 
+        assert len(self.param_list) == len(self.grad_list) == len(self.exp_avg_list) == len(self.exp_avg_sq_list) == len(self.lr_list), (
+            "Number of parameters, gradients, exp_avgs, exp_avg_sqs, and learning rates must match."
+        )
+        assert len(self.param_list) > 0, "No parameters to optimize."
+        assert len(self.param_list) <= 6, "Number of parameters must be 6 or less."
         customized_fused_adam_update(
-            self.param_list, self.grad_list, self.exp_avg_list, self.exp_avg_sq_list,
-            self.lr_list, step
+            self.param_list,
+            self.grad_list,
+            self.exp_avg_list,
+            self.exp_avg_sq_list,
+            self.lr_list,
+            self.step_counter
         )
 
     def __del__(self):
+        """Frees the resources allocated for the fused Adam kernel."""
         fused_adam_free()

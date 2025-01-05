@@ -113,7 +113,6 @@ class DefaultStrategy(Strategy):
         self,
         params: Union[Dict[str, torch.nn.Parameter], torch.nn.ParameterDict],
         optimizers: Dict[str, torch.optim.Optimizer],
-        fused: bool = False,
     ):
         """Sanity check for the parameters and optimizers.
 
@@ -131,7 +130,7 @@ class DefaultStrategy(Strategy):
             and optimizers is as expected.
         """
 
-        super().check_sanity(params, optimizers, fused)
+        super().check_sanity(params, optimizers)
         # The following keys are required for this strategy.
         for key in ["means", "scales", "quats", "opacities"]:
             assert key in params, f"{key} is required in params but missing."

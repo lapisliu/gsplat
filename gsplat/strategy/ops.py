@@ -60,61 +60,32 @@ def _update_param_with_optimizer(
         optimizer_fn: A function that takes the key of the optimizer state and the state value,
             and returns the new state value.
         params: A dictionary of parameters.
-        optimizers: A dictionary of optimizers. Or a single optimizer for fused optimizer.
+        optimizers: A dictionary of optimizers.
         names: A list of key names to update. If None, update all. Default: None.
     """
     if names is None:
         # If names is not provided, update all parameters
         names = list(params.keys())
 
-    fused = "fused" in optimizers
-    if fused:
-        # Handle fused optimizer case
-        assert isinstance(optimizers, (dict, torch.optim.Optimizer)), (
-            "For fused_adam, optimizers must be a dictionary containing the 'fused' optimizer."
-        )
-        fused_optimizer = optimizers["fused"]
-        optimizer_name_to_group = {
-            group['name']: i for i, group in enumerate(fused_optimizer.param_groups)
-        }
-        for name in names:
-            param = params[name]
-            new_param = param_fn(name, param)
-            params[name] = new_param
-            if name not in optimizer_name_to_group:
-                assert not param.requires_grad, (
-                    f"Optimizer for {name} is not found, but the parameter is trainable."
-                    f"Got requires_grad={param.requires_grad}"
-                )
-                continue
-            group_idx = optimizer_name_to_group[name]
-            param_state = fused_optimizer.state[param]
-            del fused_optimizer.state[param]
+    for name in names:
+        param = params[name]
+        new_param = param_fn(name, param)
+        params[name] = new_param
+        if name not in optimizers:
+            assert not param.requires_grad, (
+                f"Optimizer for {name} is not found, but the parameter is trainable."
+                f"Got requires_grad={param.requires_grad}"
+            )
+            continue
+        optimizer = optimizers[name]
+        for i in range(len(optimizer.param_groups)):
+            param_state = optimizer.state[param]
+            del optimizer.state[param]
             for key, value in param_state.items():
                 if key != "step":
                     param_state[key] = optimizer_fn(key, value)
-            fused_optimizer.param_groups[group_idx]["params"] = [new_param]
-            fused_optimizer.state[new_param] = param_state
-    else:
-        for name in names:
-            param = params[name]
-            new_param = param_fn(name, param)
-            params[name] = new_param
-            if name not in optimizers:
-                assert not param.requires_grad, (
-                    f"Optimizer for {name} is not found, but the parameter is trainable."
-                    f"Got requires_grad={param.requires_grad}"
-                )
-                continue
-            optimizer = optimizers[name]
-            for i in range(len(optimizer.param_groups)):
-                param_state = optimizer.state[param]
-                del optimizer.state[param]
-                for key, value in param_state.items():
-                    if key != "step":
-                        param_state[key] = optimizer_fn(key, value)
-                optimizer.param_groups[i]["params"] = [new_param]
-                optimizer.state[new_param] = param_state
+            optimizer.param_groups[i]["params"] = [new_param]
+            optimizer.state[new_param] = param_state
 
 @torch.no_grad()
 def duplicate(

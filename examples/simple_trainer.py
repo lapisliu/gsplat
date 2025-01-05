@@ -204,7 +204,7 @@ def create_splats_with_optimizers(
         device: str = "cuda",
         world_rank: int = 0,
         world_size: int = 1,
-) -> Tuple[torch.nn.ParameterDict, Dict[str, torch.optim.Optimizer]]:
+) -> Tuple[torch.nn.ParameterDict, Dict[str, torch.optim.Optimizer], CustomizedFusedAdam]:
     if init_type == "sfm":
         points = torch.from_numpy(parser.points).float()
         rgbs = torch.from_numpy(parser.points_rgb / 255.0).float()
@@ -213,6 +213,9 @@ def create_splats_with_optimizers(
         rgbs = torch.rand((init_num_pts, 3))
     else:
         raise ValueError("Please specify a correct init_type: sfm or random")
+    if fused_adam:
+        assert not sparse_grad, "FusedAdam does not support sparse gradients"
+        assert not visible_adam, "FusedAdam does not support visible adam"
 
     # Initialize the GS size to be the average dist of the 3 nearest neighbors
     dist2_avg = (knn(points, 4)[:, 1:] ** 2).mean(dim=-1)  # [N,]
@@ -255,44 +258,38 @@ def create_splats_with_optimizers(
     # Note that this would not make the training exactly equivalent, see
     # https://arxiv.org/pdf/2402.18824v1
     BS = batch_size * world_size
-    if fused_adam:
-        all_params = [
-            {"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}
+    optimizer_class = (
+        torch.optim.SparseAdam if sparse_grad
+        else SelectiveAdam if visible_adam
+        else torch.optim.Adam
+    )
+    if optimizer_class == torch.optim.Adam:
+        optimizers = {
+            name: optimizer_class(
+                [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
+                eps=1e-15 / math.sqrt(BS),
+                betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
+                fused=True,
+            )
             for name, _, lr in params
-        ]
-        optimizer = CustomizedFusedAdam(
-            all_params,
-            eps=1e-15 / math.sqrt(BS),
-            betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
-        )
-        optimizers = {"fused": optimizer}
+        }
     else:
-        optimizer_class = (
-            torch.optim.SparseAdam if sparse_grad
-            else SelectiveAdam if visible_adam
-            else torch.optim.Adam
-        )
-        if optimizer_class == torch.optim.Adam:
-            optimizers = {
-                name: optimizer_class(
-                    [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
-                    eps=1e-15 / math.sqrt(BS),
-                    betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
-                    fused=True,
-                )
-                for name, _, lr in params
-            }
-        else:
-            optimizers = {
-                name: optimizer_class(
-                    [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
-                    eps=1e-15 / math.sqrt(BS),
-                    betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
-                )
-                for name, _, lr in params
-            }
+        optimizers = {
+            name: optimizer_class(
+                [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
+                eps=1e-15 / math.sqrt(BS),
+                betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
+            )
+            for name, _, lr in params
+        }
+    fused_adam_optimizer = None
+    if fused_adam:
+        fused_adam_optimizer = CustomizedFusedAdam(
+            betas=(1 - BS * (1 - 0.9), 1 - BS * (1 - 0.999)),
+            eps=1e-15 / math.sqrt(BS),
+        )  # no global lr. lr must be provided for each individual parameter group from the individual adam optimizers
 
-    return splats, optimizers
+    return splats, optimizers, fused_adam_optimizer
 
 
 class Runner:
@@ -342,7 +339,7 @@ class Runner:
 
         # Model
         feature_dim = 32 if cfg.app_opt else None
-        self.splats, self.optimizers = create_splats_with_optimizers(
+        self.splats, self.optimizers, self.fused_adam_optimizer = create_splats_with_optimizers(
             self.parser,
             init_type=cfg.init_type,
             init_num_pts=cfg.init_num_pts,
@@ -363,7 +360,7 @@ class Runner:
         print("Model initialized. Number of GS:", len(self.splats["means"]))
 
         # Densification Strategy
-        self.cfg.strategy.check_sanity(self.splats, self.optimizers, fused=cfg.fused_adam)
+        self.cfg.strategy.check_sanity(self.splats, self.optimizers)
 
         if isinstance(self.cfg.strategy, DefaultStrategy):
             self.strategy_state = self.cfg.strategy.initialize_state(
@@ -791,12 +788,17 @@ class Runner:
 
             # optimize
             nvtx.range_push("Optimizer Step with Custom Kernel")
-            for optimizer in self.optimizers.values():
-                if cfg.visible_adam:
-                    optimizer.step(visibility_mask)
-                else:
-                    optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
+            if cfg.fused_adam:
+                self.fused_adam_optimizer.step(
+                    self.optimizers
+                )
+            else:
+                for optimizer in self.optimizers.values():
+                    if cfg.visible_adam:
+                        optimizer.step(visibility_mask)
+                    else:
+                        optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
             nvtx.range_pop()
             for optimizer in self.pose_optimizers:
                 optimizer.step()
@@ -809,12 +811,12 @@ class Runner:
                 optimizer.zero_grad(set_to_none=True)
             for scheduler in schedulers:
                 scheduler.step()
-            if cfg.fused_adam:
-                # update the "means" param's lr in the fused optimizer
-                fused_optimizer = self.optimizers["fused"]
-                for param_group in fused_optimizer.param_groups:
-                    if param_group["name"] == "means":
-                        param_group["lr"] = param_group["lr"] * (0.01 ** (1.0 / max_steps))
+            # if cfg.fused_adam:
+            #     # update the "means" param's lr in the fused optimizer
+            #     fused_optimizer = self.optimizers["fused"]
+            #     for param_group in fused_optimizer.param_groups:
+            #         if param_group["name"] == "means":
+            #             param_group["lr"] = param_group["lr"] * (0.01 ** (1.0 / max_steps))
 
             # Run post-backward steps after backward and optimizer
             if isinstance(self.cfg.strategy, DefaultStrategy):
