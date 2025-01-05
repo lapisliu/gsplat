@@ -34,23 +34,6 @@ def selective_adam_update(
     )
 
 
-def fuse_adam_step_multi_tensor(
-    tensor_lists: list,
-    step: int,
-    lr: list,
-    beta1: list,
-    beta2: list,
-    eps: list,
-    weight_decay: list,
-    tensor_to_group: list,
-    tot_num_elems: int,
-    chunk_size: int
-) -> None:
-    _make_lazy_cuda_func("fuse_adam_step_multi_tensor")(
-        tensor_lists, step, lr, beta1, beta2, eps, weight_decay, tensor_to_group, tot_num_elems, chunk_size
-    )
-
-
 def fused_adam_init(
         beta1: float,
         beta2: float,

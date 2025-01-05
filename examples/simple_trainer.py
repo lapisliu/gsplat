@@ -41,7 +41,7 @@ from gsplat.compression import PngCompression
 from gsplat.distributed import cli
 from gsplat.rendering import rasterization
 from gsplat.strategy import DefaultStrategy, MCMCStrategy
-from gsplat.optimizers import SelectiveAdam, FusedAdamMultiTensor, CustomizedFusedAdam
+from gsplat.optimizers import SelectiveAdam, CustomizedFusedAdam
 
 
 @dataclass
@@ -256,7 +256,6 @@ def create_splats_with_optimizers(
     # https://arxiv.org/pdf/2402.18824v1
     BS = batch_size * world_size
     if fused_adam:
-        print("Using CustomizedFusedAdam Optimizer")
         all_params = [
             {"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}
             for name, _, lr in params
@@ -274,7 +273,6 @@ def create_splats_with_optimizers(
             else torch.optim.Adam
         )
         if optimizer_class == torch.optim.Adam:
-            print("Using Adam Optimizer")
             optimizers = {
                 name: optimizer_class(
                     [{"params": splats[name], "lr": lr * math.sqrt(BS), "name": name}],
