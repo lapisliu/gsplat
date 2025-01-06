@@ -42,11 +42,11 @@ class CustomizedFusedAdam:
 
                 state = optimizer.state[param]
                 if len(state) == 0:
-                    print("Empty state for parameter")
                     state['step'] = 0
                     state['exp_avg'] = torch.zeros_like(param.data, dtype=param.dtype, device=param.device)
                     state['exp_avg_sq'] = torch.zeros_like(param.data, dtype=param.dtype, device=param.device)
                 state['step'] += 1
+                print(f"Step: {state['step']}, ExpAvg: {state['exp_avg']}, ExpAvgSq: {state['exp_avg_sq']}")
                 self.step_counter = state['step']
 
                 exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
@@ -57,6 +57,7 @@ class CustomizedFusedAdam:
 
                 print(f"group name: {group['name']}")
                 print(f"first five gradients: {param.grad[:5]}")
+                print(f"first five parameters: {param.data[:5]}")
 
     def step(self, optimizers: Union[Dict[str, torch.optim.Optimizer], torch.optim.Optimizer]):
         """
