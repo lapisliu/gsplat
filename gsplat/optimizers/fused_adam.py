@@ -37,10 +37,12 @@ class CustomizedFusedAdam:
 
             for param in group['params']:
                 if param.grad is None:
+                    print("No gradient for parameter")
                     continue
 
                 state = optimizer.state[param]
                 if len(state) == 0:
+                    print("Empty state for parameter")
                     state['step'] = 0
                     state['exp_avg'] = torch.zeros_like(param.data, dtype=param.dtype, device=param.device)
                     state['exp_avg_sq'] = torch.zeros_like(param.data, dtype=param.dtype, device=param.device)
@@ -76,6 +78,9 @@ class CustomizedFusedAdam:
         )
         assert len(self.param_list) > 0, "No parameters to optimize."
         assert len(self.param_list) <= 6, "Number of parameters must be 6 or less."
+
+        tot_num_params = sum(p.numel() for p in self.param_list)
+        print(f"Optimizing {tot_num_params} parameters with {len(self.param_list)} tensors.")
         customized_fused_adam_update(
             self.param_list,
             self.grad_list,
