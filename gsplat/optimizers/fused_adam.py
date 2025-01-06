@@ -40,6 +40,10 @@ class CustomizedFusedAdam:
                     continue
 
                 state = optimizer.state[param]
+                if len(state) == 0:
+                    state['step'] = 0
+                    state['exp_avg'] = torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
+                    state['exp_avg_sq'] = torch.zeros_like(p.data, dtype=p.dtype, device=p.device)
                 state['step'] += 1
                 self.step_counter = state['step']
 
