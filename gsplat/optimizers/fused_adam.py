@@ -81,6 +81,9 @@ class CustomizedFusedAdam:
 
         tot_num_params = sum(p.numel() for p in self.param_list)
         print(f"Optimizing {tot_num_params} parameters with {len(self.param_list)} tensors.")
+        print(f"Step {self.step_counter}")
+        print(f"exp_avg: {self.exp_avg_list}")
+        print(f"exp_avg_sq: {self.exp_avg_sq_list}")
         customized_fused_adam_update(
             self.param_list,
             self.grad_list,

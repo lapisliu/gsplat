@@ -273,6 +273,8 @@ class DefaultStrategy(Strategy):
         device = grads.device
 
         is_grad_high = grads > self.grow_grad2d
+        print(f"is_grad_high: {is_grad_high}")
+        print(f"count: {count}")
         is_small = (
             torch.exp(params["scales"]).max(dim=-1).values
             <= self.grow_scale3d * state["scene_scale"]
