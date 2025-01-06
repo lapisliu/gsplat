@@ -55,6 +55,9 @@ class CustomizedFusedAdam:
                 self.exp_avg_list.append(exp_avg.contiguous())
                 self.exp_avg_sq_list.append(exp_avg_sq.contiguous())
 
+                print(f"group name: {group['name']}")
+                print(f"first five gradients: {param.grad[:5]}")
+
     def step(self, optimizers: Union[Dict[str, torch.optim.Optimizer], torch.optim.Optimizer]):
         """
         Performs a single optimization step.
@@ -79,11 +82,6 @@ class CustomizedFusedAdam:
         assert len(self.param_list) > 0, "No parameters to optimize."
         assert len(self.param_list) <= 6, "Number of parameters must be 6 or less."
 
-        tot_num_params = sum(p.numel() for p in self.param_list)
-        print(f"Optimizing {tot_num_params} parameters with {len(self.param_list)} tensors.")
-        print(f"Step {self.step_counter}")
-        print(f"exp_avg: {self.exp_avg_list}")
-        print(f"exp_avg_sq: {self.exp_avg_sq_list}")
         customized_fused_adam_update(
             self.param_list,
             self.grad_list,
