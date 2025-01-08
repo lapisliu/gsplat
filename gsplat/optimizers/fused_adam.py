@@ -35,29 +35,25 @@ class CustomizedFusedAdam:
             lr = group['lr']
             self.lr_list.append(lr)
 
-            for param in group['params']:
-                if param.grad is None:
-                    print("No gradient for parameter")
-                    continue
+            assert len(group['params']) == 1, "more than one tensor in group"
+            param = group['params'][0]
+            if param.grad is None:
+                print("No gradient for parameter")
+                continue
 
-                state = optimizer.state[param]
-                if len(state) == 0:
-                    state['step'] = 0
-                    state['exp_avg'] = torch.zeros_like(param.data, dtype=param.dtype, device=param.device)
-                    state['exp_avg_sq'] = torch.zeros_like(param.data, dtype=param.dtype, device=param.device)
-                state['step'] += 1
-                print(f"Step: {state['step']}, ExpAvg: {state['exp_avg']}, ExpAvgSq: {state['exp_avg_sq']}")
-                self.step_counter = state['step']
+            state = optimizer.state[param]
+            if len(state) == 0:
+                state['step'] = 0
+                state['exp_avg'] = torch.zeros_like(param.data, dtype=param.dtype, device=param.device)
+                state['exp_avg_sq'] = torch.zeros_like(param.data, dtype=param.dtype, device=param.device)
+            state['step'] += 1
+            self.step_counter = state['step']
 
-                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-                self.param_list.append(param.data.contiguous())
-                self.grad_list.append(param.grad.contiguous())
-                self.exp_avg_list.append(exp_avg.contiguous())
-                self.exp_avg_sq_list.append(exp_avg_sq.contiguous())
-
-                print(f"group name: {group['name']}")
-                print(f"first five gradients: {param.grad[:5]}")
-                print(f"first five parameters: {param.data[:5]}")
+            exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
+            self.param_list.append(param.data.contiguous())
+            self.grad_list.append(param.grad.contiguous())
+            self.exp_avg_list.append(exp_avg.data.contiguous())
+            self.exp_avg_sq_list.append(exp_avg_sq.data.contiguous())
 
     def step(self, optimizers: Union[Dict[str, torch.optim.Optimizer], torch.optim.Optimizer]):
         """
