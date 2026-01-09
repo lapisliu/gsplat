@@ -72,6 +72,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("rasterize_to_pixels_from_world_3dgs_fwd", &gsplat::rasterize_to_pixels_from_world_3dgs_fwd);
     m.def("rasterize_to_pixels_from_world_3dgs_bwd", &gsplat::rasterize_to_pixels_from_world_3dgs_bwd);
 
+    m.def("projection_4dgs_fused_fwd", &gsplat::projection_4dgs_fused_fwd);
+    m.def("projection_4dgs_fused_bwd", &gsplat::projection_4dgs_fused_bwd);
+    m.def("spherical_harmonics4d_fwd", &gsplat::spherical_harmonics4d_fwd);
+    m.def("spherical_harmonics4d_bwd", &gsplat::spherical_harmonics4d_bwd);
+
     // Cameras from 3DGUT
     py::enum_<ShutterType>(m, "ShutterType")
         .value("ROLLING_TOP_TO_BOTTOM", ShutterType::ROLLING_TOP_TO_BOTTOM)

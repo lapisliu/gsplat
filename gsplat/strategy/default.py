@@ -5,7 +5,7 @@ import torch
 from typing_extensions import Literal
 
 from .base import Strategy
-from .ops import duplicate, remove, reset_opa, split
+from .ops import duplicate, remove, reset_opa, split, split_4dgs
 
 
 @dataclass
@@ -92,6 +92,7 @@ class DefaultStrategy(Strategy):
     revised_opacity: bool = False
     verbose: bool = False
     key_for_gradient: Literal["means2d", "gradient_2dgs"] = "means2d"
+    split_in_4d: bool = False # Only for 4dgs
 
     def initialize_state(self, scene_scale: float = 1.0) -> Dict[str, Any]:
         """Initialize and return the running state for this strategy.
@@ -299,13 +300,22 @@ class DefaultStrategy(Strategy):
 
         # then split
         if n_split > 0:
-            split(
-                params=params,
-                optimizers=optimizers,
-                state=state,
-                mask=is_split,
-                revised_opacity=self.revised_opacity,
-            )
+            if self.split_in_4d:
+                split_4dgs(
+                    params=params,
+                    optimizers=optimizers,
+                    state=state,
+                    mask=is_split,
+                    revised_opacity=self.revised_opacity,
+                )
+            else:
+                split(
+                    params=params,
+                    optimizers=optimizers,
+                    state=state,
+                    mask=is_split,
+                    revised_opacity=self.revised_opacity,
+                )
         return n_dupli, n_split
 
     @torch.no_grad()

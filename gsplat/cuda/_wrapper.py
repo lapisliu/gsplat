@@ -1109,6 +1109,12 @@ class _FullyFusedProjection(torch.autograd.Function):
         camera_model_type = ctx.camera_model_type
         if v_compensations is not None:
             v_compensations = v_compensations.contiguous()
+
+        # if v_conics.abs().sum() > 1e3:
+        #     print(
+        #         "[Warning] Large gradient input for v_conics detected in fully_fused_projection backward(). Gradient sum abs: ",
+        #         v_conics.abs().sum().item(),
+        #     )
         v_means, v_covars, v_quats, v_scales, v_viewmats = _make_lazy_cuda_func(
             "projection_ewa_3dgs_fused_bwd"
         )(
@@ -2607,4 +2613,489 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             None,
             None,
             None,
+        )
+
+def fully_fused_projection_4dgs(
+        means: Tensor,  # [..., N, 3]
+        covars: Optional[Tensor],  # [..., N, 6] or None
+        quats: Optional[Tensor],  # [..., N, 4] or None
+        scales: Optional[Tensor],  # [..., N, 3] or None
+        opacities: Tensor, # [..., N]
+        ts: Tensor,  # [..., N, 1]
+        quats_t: Tensor, # [..., N, 4]
+        scales_t: Tensor, # [..., N, 1]
+        viewmats: Tensor,  # [..., C, 4, 4]
+        Ks: Tensor,  # [..., C, 3, 3]
+        timestamps: Tensor,  # [..., C, 1]
+        width: int,
+        height: int,
+        eps2d: float = 0.3,
+        near_plane: float = 0.01,
+        far_plane: float = 1e10,
+        radius_clip: float = 0.0,
+        packed: bool = False,
+        sparse_grad: bool = False,
+        calc_compensations: bool = False,
+        camera_model: Literal["pinhole", "ortho", "fisheye", "ftheta"] = "pinhole",
+) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+    """Projects Gaussians to 2D.
+
+    This function fuse the process of computing covariances
+    (:func:`quat_scale_to_covar_preci()`), transforming to camera space (:func:`world_to_cam()`),
+    and projection (:func:`proj()`).
+
+    .. note::
+
+        During projection, we ignore the Gaussians that are outside of the camera frustum.
+        So not all the elements in the output tensors are valid. The output `radii` could serve as
+        an indicator, in which zero radii means the corresponding elements are invalid in
+        the output tensors and will be ignored in the next rasterization process. If `packed=True`,
+        the output tensors will be packed into a flattened tensor, in which all elements are valid.
+        In this case, a ``batch_ids` tensor and `camera_ids` tensor will be returned to indicate the
+        batch, camera and gaussian indices of the packed flattened tensor, which is essentially following the
+        COO sparse tensor format.
+
+    .. note::
+
+        This functions supports projecting Gaussians with either covariances or {quaternions, scales},
+        which will be converted to covariances internally in a fused CUDA kernel. Either `covars` or
+        {`quats`, `scales`} should be provided.
+
+    Args:
+        means: Gaussian means. [..., N, 3]
+        covars: Gaussian covariances (flattened upper triangle). [..., N, 6] Optional.
+        quats: Quaternions (No need to be normalized). [..., N, 4] Optional.
+        scales: Scales. [..., N, 3] Optional.
+        opacities: Gaussian opacities in range [0, 1].
+        ts: Temporal mean for each Gaussian. [..., N, 1]
+        quats_t: Temporal quaternions for each Gaussian. [..., N, 4]
+        scales_t: Temporal scales for each Gaussian. [..., N, 1]
+        viewmats: World-to-camera matrices. [..., C, 4, 4]
+        Ks: Camera intrinsics. [..., C, 3, 3]
+        timestamps: Timestamps for each camera. [..., C, 1]
+        width: Image width.
+        height: Image height.
+        eps2d: A epsilon added to the 2D covariance for numerical stability. Default: 0.3.
+        near_plane: Near plane distance. Default: 0.01.
+        far_plane: Far plane distance. Default: 1e10.
+        radius_clip: Gaussians with projected radii smaller than this value will be ignored. Default: 0.0.
+        packed: If True, the output tensors will be packed into a flattened tensor. Default: False.
+        sparse_grad: This is only effective when `packed` is True. If True, during backward the gradients
+          of {`means`, `covars`, `quats`, `scales`} will be a sparse Tensor in COO layout. Default: False.
+        calc_compensations: If True, a view-dependent opacity compensation factor will be computed, which
+          is useful for anti-aliasing. Default: False.
+
+    Returns:
+        A tuple:
+
+        If `packed` is True:
+
+        - **batch_ids**. The batch indices of the projected Gaussians. Int32 tensor of shape [nnz].
+        - **camera_ids**. The camera indices of the projected Gaussians. Int32 tensor of shape [nnz].
+        - **gaussian_ids**. The column indices of the projected Gaussians. Int32 tensor of shape [nnz].
+        - **indptr**. CSR-style index pointer into gaussian_ids for batch-camera pairs. Int32 tensor of shape [B*C+1].
+        - **radii**. The maximum radius of the projected Gaussians in pixel unit. Int32 tensor of shape [nnz, 2].
+        - **means**. Projected Gaussian means in 2D. [nnz, 2]
+        - **depths**. The z-depth of the projected Gaussians. [nnz]
+        - **conics**. Inverse of the projected covariances. Return the flattend upper triangle with [nnz, 3]
+        - **compensations**. The view-dependent opacity compensation factor. [nnz]
+
+        If `packed` is False:
+
+        - **radii**. The maximum radius of the projected Gaussians in pixel unit. Int32 tensor of shape [..., C, N, 2].
+        - **means**. Projected Gaussian means in 2D. [..., C, N, 2]
+        - **depths**. The z-depth of the projected Gaussians. [..., C, N]
+        - **conics**. Inverse of the projected covariances. Return the flattend upper triangle with [..., C, N, 3]
+        - **weighted_opacities**. The opacities weighted by marginal time. [..., C, N]
+        - **compensations**. The view-dependent opacity compensation factor. [..., C, N]
+    """
+    batch_dims = means.shape[:-2]
+    N = means.shape[-2]
+    C = viewmats.shape[-3]
+    assert means.shape == batch_dims + (N, 3), means.shape
+    assert viewmats.shape == batch_dims + (C, 4, 4), viewmats.shape
+    assert Ks.shape == batch_dims + (C, 3, 3), Ks.shape
+    means = means.contiguous()
+    if covars is not None:
+        assert covars.shape == batch_dims + (N, 6), covars.shape
+        covars = covars.contiguous()
+    else:
+        assert quats is not None, "covars or quats is required"
+        assert scales is not None, "covars or scales is required"
+        assert quats.shape == batch_dims + (N, 4), quats.shape
+        assert scales.shape == batch_dims + (N, 3), scales.shape
+        quats = quats.contiguous()
+        scales = scales.contiguous()
+    if sparse_grad:
+        assert packed, "sparse_grad is only supported when packed is True"
+        assert batch_dims == (), "sparse_grad does not support batch dimensions"
+    assert opacities.shape == batch_dims + (N,), opacities.shape
+    opacities = opacities.contiguous()
+    assert ts.shape == batch_dims + (N, 1), ts.shape
+    ts = ts.contiguous()
+    assert quats_t.shape == batch_dims + (N, 4), quats_t.shape
+    quats_t = quats_t.contiguous()
+    assert scales_t.shape == batch_dims + (N, 1), scales_t.shape
+    scales_t = scales_t.contiguous()
+    assert timestamps.shape == batch_dims + (C, 1), timestamps.shape
+    timestamps = timestamps.contiguous()
+
+    assert (
+            camera_model != "ftheta"
+    ), "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+
+    viewmats = viewmats.contiguous()
+    Ks = Ks.contiguous()
+    if packed:
+        raise NotImplementedError
+        return _FullyFusedProjectionPacked4DGS.apply(
+            means,
+            covars,
+            quats,
+            scales,
+
+            viewmats,
+            Ks,
+            width,
+            height,
+            eps2d,
+            near_plane,
+            far_plane,
+            radius_clip,
+            sparse_grad,
+            calc_compensations,
+            camera_model,
+            opacities,
+        )
+    else:
+        return _FullyFusedProjection4DGS.apply(
+            means,
+            covars,
+            quats,
+            scales,
+            opacities,
+            ts,
+            quats_t,
+            scales_t,
+            viewmats,
+            Ks,
+            timestamps,
+            width,
+            height,
+            eps2d,
+            near_plane,
+            far_plane,
+            radius_clip,
+            calc_compensations,
+            camera_model,
+        )
+
+
+class _FullyFusedProjection4DGS(torch.autograd.Function):
+    """Projects Gaussians to 2D."""
+
+    @staticmethod
+    def forward(
+            ctx,
+            means: Tensor,  # [..., N, 3]
+            covars: Tensor,  # [..., N, 6] or None
+            quats: Tensor,  # [..., N, 4] or None
+            scales: Tensor,  # [..., N, 3] or None
+            opacities: Tensor,  # [..., N]
+            ts: Tensor,  # [..., N, 1]
+            quats_t: Tensor, # [..., N, 4]
+            scales_t: Tensor, # [..., N, 1]
+            viewmats: Tensor,  # [..., C, 4, 4]
+            Ks: Tensor,  # [..., C, 3, 3]
+            timestamps: Tensor,  # [..., C, 1]
+            width: int,
+            height: int,
+            eps2d: float,
+            near_plane: float,
+            far_plane: float,
+            radius_clip: float,
+            calc_compensations: bool,
+            camera_model: Literal["pinhole", "ortho", "fisheye", "ftheta"] = "pinhole",
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+        assert (
+                camera_model != "ftheta"
+        ), "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+
+        camera_model_type = _make_lazy_cuda_obj(
+            f"CameraModelType.{camera_model.upper()}"
+        )
+
+        # "covars" and {"quats", "scales"} are mutually exclusive
+        radii, means2d, depths, conics, weighted_opacities, compensations = _make_lazy_cuda_func(
+            "projection_4dgs_fused_fwd"
+        )(
+            means,
+            covars,
+            quats,
+            scales,
+            opacities,
+            ts,
+            quats_t,
+            scales_t,
+            viewmats,
+            Ks,
+            timestamps,
+            width,
+            height,
+            eps2d,
+            near_plane,
+            far_plane,
+            radius_clip,
+            calc_compensations,
+            camera_model_type,
+        )
+        if not calc_compensations:
+            compensations = None
+        ctx.save_for_backward(
+            means, covars, quats, scales, opacities, ts, quats_t, scales_t, viewmats, Ks, timestamps, radii, conics, compensations
+        )
+        ctx.width = width
+        ctx.height = height
+        ctx.eps2d = eps2d
+        ctx.camera_model_type = camera_model_type
+
+        return radii, means2d, depths, conics, weighted_opacities, compensations
+
+    @staticmethod
+    def backward(ctx, v_radii, v_means2d, v_depths, v_conics, v_weighted_opacities, v_compensations):
+        (
+            means,
+            covars,
+            quats,
+            scales,
+            opacities,
+            ts,
+            quats_t,
+            scales_t,
+            viewmats,
+            Ks,
+            timestamps,
+            radii,
+            conics,
+            compensations,
+        ) = ctx.saved_tensors
+        width = ctx.width
+        height = ctx.height
+        eps2d = ctx.eps2d
+        camera_model_type = ctx.camera_model_type
+        if v_compensations is not None:
+            v_compensations = v_compensations.contiguous()
+
+        # check for the input gradient scale
+        # if v_means2d.abs().sum() > 1e3:
+        #     print(
+        #         "[Warning] Large gradient input for v_means2d detected in fully_fused_projection_4dgs backward(). Gradient sum abs: ",
+        #         v_means2d.abs().sum().item(),
+        #     )
+        # if v_depths.abs().sum() > 1e3:
+        #     print(
+        #         "[Warning] Large gradient input for v_depths detected in fully_fused_projection_4dgs backward(). Gradient sum abs: ",
+        #         v_depths.abs().sum().item(),
+        #     )
+        # if v_conics.abs().sum() > 1e3:
+        #     print(
+        #         "[Warning] Large gradient input for v_conics detected in fully_fused_projection_4dgs backward(). Gradient sum abs: ",
+        #         v_conics.abs().sum().item(),
+        #     )
+        # if v_weighted_opacities.abs().sum() > 1e3:
+        #     print(
+        #         "[Warning] Large gradient input for v_weighted_opacities detected in fully_fused_projection_4dgs backward(). Gradient sum abs: ",
+        #         v_weighted_opacities.abs().sum().item(),
+        #     )
+
+        v_means, v_covars, v_quats, v_scales, v_opacities, v_ts, v_quats_t, v_scales_t, v_viewmats = _make_lazy_cuda_func(
+            "projection_4dgs_fused_bwd"
+        )(
+            means,
+            covars,
+            quats,
+            scales,
+            opacities,
+            ts,
+            quats_t,
+            scales_t,
+            viewmats,
+            Ks,
+            timestamps,
+            width,
+            height,
+            eps2d,
+            camera_model_type,
+            radii,
+            conics,
+            compensations,
+            v_means2d.contiguous(),
+            v_depths.contiguous(),
+            v_conics.contiguous(),
+            v_weighted_opacities.contiguous(),
+            v_compensations,
+            ctx.needs_input_grad[4],  # viewmats_requires_grad
+        )
+        if not ctx.needs_input_grad[0]:
+            v_means = None
+        if not ctx.needs_input_grad[1]:
+            v_covars = None
+        if not ctx.needs_input_grad[2]:
+            v_quats = None
+        if not ctx.needs_input_grad[3]:
+            v_scales = None
+        if not ctx.needs_input_grad[4]:
+            v_opacities = None
+        if not ctx.needs_input_grad[5]:
+            v_ts = None
+        if not ctx.needs_input_grad[6]:
+            v_quats_t = None
+        if not ctx.needs_input_grad[7]:
+            v_scales_t = None
+        if not ctx.needs_input_grad[8]:
+            v_viewmats = None
+
+        return (
+            v_means,
+            v_covars,
+            v_quats,
+            v_scales,
+            v_opacities,
+            v_ts,
+            v_quats_t,
+            v_scales_t,
+            v_viewmats,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        )
+
+
+def spherical_harmonics_4dgs(
+        degrees_spatial: int,
+        degrees_temporal: int,
+        dirs: Tensor,          # [..., 3]
+        coeffs: Tensor,        # [..., K, 3]  with K = (degrees_spatial+1)^2 * (degrees_temporal+1)
+        ts: Tensor,            # [...]         per-point time stamp
+        timestamps: Tensor,    # [...]
+        time_duration: float,  # scalar (period length)
+        masks: Optional[Tensor] = None,  # [...]  optional boolean mask
+) -> Tensor:
+    """Computes spherical harmonics.
+
+    Args:
+        degrees_to_use: The degree to be used.
+        dirs: Directions. [..., 3]
+        coeffs: Coefficients. [..., K, 3]
+        masks: Optional boolen masks to skip some computation. [...,] Default: None.
+
+    Returns:
+        Spherical harmonics. [..., 3]
+    """
+    Kspatial = (degrees_spatial + 1) ** 2
+    Kexpected = Kspatial * (degrees_temporal + 1)
+    assert coeffs.shape[-2] >= Kexpected, (coeffs.shape[-2], Kexpected)
+    batch_dims = dirs.shape[:-1]
+    assert dirs.shape == batch_dims + (3,), dirs.shape
+    assert (
+            (len(coeffs.shape) == len(batch_dims) + 2)
+            and coeffs.shape[:-2] == batch_dims
+            and coeffs.shape[-1] == 3
+    ), coeffs.shape
+    assert ts.shape == batch_dims, f"ts.shape: {ts.shape} vs batch_dims: {batch_dims}"
+    assert timestamps.shape == batch_dims, f"timestamps.shape: {timestamps.shape} vs batch_dims: {batch_dims}"
+
+    if masks is not None:
+        assert masks.shape == batch_dims, masks.shape
+        masks = masks.contiguous()
+
+    return _SphericalHarmonics4DGS.apply(
+        degrees_spatial,
+        degrees_temporal,
+        dirs.contiguous(),
+        coeffs.contiguous(),
+        ts.contiguous(),
+        timestamps.contiguous(),
+        float(time_duration),
+        masks,
+    )
+
+class _SphericalHarmonics4DGS(torch.autograd.Function):
+
+    @staticmethod
+    def forward(
+            ctx,
+            degrees_spatial: int,
+            degrees_temporal: int,
+            dirs: Tensor,     # [..., 3]
+            coeffs: Tensor,   # [..., K, 3]
+            ts: Tensor,       # [...]
+            timestamps: Tensor,
+            time_duration: float,
+            masks: Optional[Tensor],
+    ) -> Tensor:
+        colors = _make_lazy_cuda_func("spherical_harmonics4d_fwd")(
+            degrees_spatial,
+            degrees_temporal,
+            dirs,
+            coeffs,
+            ts,
+            timestamps,
+            float(time_duration),
+            masks,
+        )
+        # Save for backward
+        ctx.save_for_backward(dirs, coeffs, ts, masks if masks is not None else torch.tensor([], device=dirs.device, dtype=torch.bool))
+        ctx.degrees_spatial = degrees_spatial
+        ctx.degrees_temporal = degrees_temporal
+        ctx.timestamps = timestamps
+        ctx.time_duration = float(time_duration)
+        return colors
+
+    @staticmethod
+    def backward(ctx, v_colors: Tensor):
+        dirs, coeffs, ts, masks = ctx.saved_tensors
+        degrees_spatial = ctx.degrees_spatial
+        degrees_temporal = ctx.degrees_temporal
+        timestamps = ctx.timestamps
+        time_duration = ctx.time_duration
+
+        # Figure out which grads we need
+        need_v_dirs = ctx.needs_input_grad[2]  # dirs
+        need_v_coeffs = ctx.needs_input_grad[3]  # coeffs
+
+        v_coeffs, v_dirs, v_ts = _make_lazy_cuda_func("spherical_harmonics4d_bwd")(
+            degrees_spatial,
+            degrees_temporal,
+            dirs,
+            coeffs,
+            ts,
+            timestamps,
+            float(time_duration),
+            (None if masks.numel() == 0 else masks),
+            v_colors.contiguous(),
+            need_v_dirs,
+        )
+
+        if not need_v_dirs:
+            v_dirs = None
+        if not need_v_coeffs:
+            v_coeffs = None
+
+        return (
+            None,          # degrees_spatial
+            None,          # degrees_temporal
+            v_dirs,        # dirs
+            v_coeffs,      # coeffs
+            v_ts,          # ts
+            None,          # timestamp
+            None,          # time_duration
+            None,          # masks (no grad)
         )

@@ -77,4 +77,83 @@ std::tuple<at::Tensor, at::Tensor> spherical_harmonics_bwd(
     return std::make_tuple(v_coeffs, v_dirs); // [..., K, 3], [..., 3]
 }
 
+at::Tensor spherical_harmonics4d_fwd(
+    const uint32_t degrees_spatial,
+    const uint32_t degrees_temporal,
+    const at::Tensor dirs,                // [..., 3]
+    const at::Tensor coeffs,              // [..., K, 3]
+    const at::Tensor ts,                 // [... ]
+    const at::Tensor timestamps,        // [... ]
+    const float time_duration,           // scalar
+    const at::optional<at::Tensor> masks // [...]
+) {
+    DEVICE_GUARD(dirs);
+    CHECK_INPUT(dirs);
+    CHECK_INPUT(coeffs);
+    CHECK_INPUT(ts);
+    CHECK_INPUT(timestamps);
+    if (masks.has_value()) {
+        CHECK_INPUT(masks.value());
+    }
+    TORCH_CHECK(coeffs.size(-1) == 3, "coeffs must have last dimension 3");
+    TORCH_CHECK(dirs.size(-1) == 3, "dirs must have last dimension 3");
+
+    at::Tensor colors = at::empty_like(dirs); // [..., 3]
+
+    launch_spherical_harmonics4d_fwd_kernel(
+        degrees_spatial, degrees_temporal, dirs, coeffs, ts, timestamps, time_duration, masks, colors
+    );
+    return colors; // [..., 3]
+}
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics4d_bwd(
+    const uint32_t degrees_spatial,
+    const uint32_t degrees_temporal,
+    const at::Tensor dirs,                // [..., 3]
+    const at::Tensor coeffs,              // [..., K, 3]
+    const at::Tensor ts,                 // [... ]
+    const at::Tensor timestamps,        // [... ]
+    const float time_duration,           // scalar
+    const at::optional<at::Tensor> masks, // [...]
+    const at::Tensor v_colors,            // [..., 3]
+    bool compute_v_dirs
+) {
+    DEVICE_GUARD(dirs);
+    CHECK_INPUT(dirs);
+    CHECK_INPUT(coeffs);
+    CHECK_INPUT(v_colors);
+    if (masks.has_value()) {
+        CHECK_INPUT(masks.value());
+    }
+    CHECK_INPUT(ts);
+    CHECK_INPUT(timestamps);
+
+    TORCH_CHECK(v_colors.size(-1) == 3, "v_colors must have last dimension 3");
+    TORCH_CHECK(coeffs.size(-1) == 3, "coeffs must have last dimension 3");
+    TORCH_CHECK(dirs.size(-1) == 3, "dirs must have last dimension 3");
+
+    at::Tensor v_coeffs = at::zeros_like(coeffs);
+    at::Tensor v_dirs;
+    if (compute_v_dirs) {
+        v_dirs = at::zeros_like(dirs);
+    }
+    at::Tensor v_ts = at::zeros_like(ts);
+
+    launch_spherical_harmonics4d_bwd_kernel(
+        degrees_spatial,
+        degrees_temporal,
+        dirs,
+        coeffs,
+        ts,
+        timestamps,
+        time_duration,
+        masks,
+        v_colors,
+        v_coeffs,
+        v_dirs.defined() ? at::optional<at::Tensor>(v_dirs) : c10::nullopt,
+        v_ts
+    );
+    return std::make_tuple(v_coeffs, v_dirs, v_ts); // [..., K, 3], [..., 3], [...]
+}
+
 } // namespace gsplat

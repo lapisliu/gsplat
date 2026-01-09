@@ -254,6 +254,27 @@ def get_projection_matrix(znear, zfar, fovX, fovY, device="cuda"):
     P[2, 3] = -(zfar * znear) / (zfar - znear)
     return P
 
+def build_rotation_4d(l: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
+    q_l = F.normalize(l, dim=-1)
+    q_r = F.normalize(r, dim=-1)
+    a, b, c, d = q_l.unbind(-1)
+    p, q, rr, s = q_r.unbind(-1)
+    M_l = torch.stack([
+        a, -b, -c, -d,
+        b,  a, -d,  c,
+        c,  d,  a, -b,
+        d, -c,  b,  a
+    ], dim=-1).view(-1, 4, 4)
+    M_r = torch.stack([
+        p,  q,  rr,  s,
+        -q,  p,  -s,  rr,
+        -rr, s,   p, -q,
+        -s, -rr,  q,  p
+    ], dim=-1).view(-1, 4, 4)
+    A = torch.bmm(M_l, M_r)
+    A = torch.flip(A, dims=[1, 2])
+    return A
+
 
 # def depth_to_normal(
 #     depths: Tensor, camtoworlds: Tensor, Ks: Tensor, near_plane: float, far_plane: float

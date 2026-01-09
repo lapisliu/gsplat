@@ -563,4 +563,97 @@ rasterize_to_pixels_from_world_3dgs_bwd(
     const at::Tensor v_render_alphas  // [..., C, image_height, image_width, 1]
 );
 
+std::tuple<
+    at::Tensor,
+    at::Tensor,
+    at::Tensor,
+    at::Tensor,
+    at::Tensor,
+    at::Tensor>
+projection_4dgs_fused_fwd(
+    const at::Tensor means,                // [..., N, 3]
+    const at::optional<at::Tensor> covars, // [..., N, 6] optional
+    const at::optional<at::Tensor> quats,  // [..., N, 4] optional
+    const at::optional<at::Tensor> scales, // [..., N, 3] optional
+    const at::Tensor opacities,            // [..., N]
+    const at::Tensor ts,                   // [..., N, 1]
+    const at::Tensor quats_t,              // [..., N, 4]
+    const at::Tensor scales_t,             // [..., N, 1]
+    const at::Tensor viewmats,             // [..., C, 4, 4]
+    const at::Tensor Ks,                   // [..., C, 3, 3]
+    const at::Tensor timestamps,           // [..., C, 1]
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const float eps2d,
+    const float near_plane,
+    const float far_plane,
+    const float radius_clip,
+    const bool calc_compensations,
+    const CameraModelType camera_model
+);
+
+std::tuple<
+    at::Tensor,
+    at::Tensor,
+    at::Tensor,
+    at::Tensor,
+    at::Tensor,
+    at::Tensor,
+    at::Tensor,
+    at::Tensor,
+    at::Tensor>
+projection_4dgs_fused_bwd(
+    // fwd inputs
+    const at::Tensor means,                // [..., N, 3]
+    const at::optional<at::Tensor> covars, // [..., N, 6] optional
+    const at::optional<at::Tensor> quats,  // [..., N, 4] optional
+    const at::optional<at::Tensor> scales, // [..., N, 3] optional
+    const at::Tensor opacities,            // [..., N]
+    const at::Tensor ts,                   // [..., N, 1]
+    const at::Tensor quats_t,              // [..., N, 4]
+    const at::Tensor scales_t,             // [..., N, 1]
+    const at::Tensor viewmats,             // [..., C, 4, 4]
+    const at::Tensor Ks,                   // [..., C, 3, 3]
+    const at::Tensor timestamps,           // [..., C, 1]
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const float eps2d,
+    const CameraModelType camera_model,
+    // fwd outputs
+    const at::Tensor radii,                       // [..., C, N, 2]
+    const at::Tensor conics,                      // [..., C, N, 3]
+    const at::optional<at::Tensor> compensations, // [..., C, N] optional
+    // grad outputs
+    const at::Tensor v_means2d,                     // [..., C, N, 2]
+    const at::Tensor v_depths,                      // [..., C, N]
+    const at::Tensor v_conics,                      // [..., C, N, 3]
+    const at::Tensor v_weighted_opacities,          // [..., C, N]
+    const at::optional<at::Tensor> v_compensations, // [..., C, N] optional
+    const bool viewmats_requires_grad
+);
+
+at::Tensor spherical_harmonics4d_fwd(
+    const uint32_t degrees_spatial,
+    const uint32_t degrees_temporal,
+    const at::Tensor dirs,                // [..., 3]
+    const at::Tensor coeffs,              // [..., K, 3]
+    const at::Tensor ts,                 // [... ]
+    const at::Tensor timestamps,        // [... ]
+    const float time_duration,           // scalar
+    const at::optional<at::Tensor> masks // [...]
+);
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics4d_bwd(
+    const uint32_t degrees_spatial,
+    const uint32_t degrees_temporal,
+    const at::Tensor dirs,                // [..., 3]
+    const at::Tensor coeffs,              // [..., K, 3]
+    const at::Tensor ts,                 // [... ]
+    const at::Tensor timestamps,        // [... ]
+    const float time_duration,           // scalar
+    const at::optional<at::Tensor> masks, // [...]
+    const at::Tensor v_colors,            // [..., 3]
+    bool compute_v_dirs
+);
+
 } // namespace gsplat

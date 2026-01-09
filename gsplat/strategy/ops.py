@@ -7,7 +7,7 @@ from torch import Tensor
 
 from gsplat import quat_scale_to_covar_preci
 from gsplat.relocation import compute_relocation
-from gsplat.utils import normalized_quat_to_rotmat
+from gsplat.utils import normalized_quat_to_rotmat, build_rotation_4d
 
 
 @torch.no_grad()
@@ -367,3 +367,81 @@ def inject_noise_to_position(
     )
     noise = torch.einsum("bij,bj->bi", covars, noise)
     params["means"].add_(noise)
+
+@torch.no_grad()
+def split_4dgs(
+        params: Union[Dict[str, torch.nn.Parameter], torch.nn.ParameterDict],
+        optimizers: Dict[str, torch.optim.Optimizer],
+        state: Dict[str, torch.Tensor],
+        mask: torch.Tensor,
+        revised_opacity: bool = False,
+):
+    """
+    In-place split of 4D Gaussians (xyz + time). Follows gsplat's split pattern:
+      - sample 2 children per selected Gaussian
+      - spatial pieces match gsplat: means/scales/quats/opacities
+      - temporal pieces mirror spatial: ts/scales_t/quats_t
+
+    Expected keys in `params`:
+        - "means":     [N, 3]
+        - "scales":    [N, 3]        (log-space, like gsplat)
+        - "quats":     [N, 4]        (spatial quaternion)
+        - "opacities": [N]
+        - "ts":        [N, 1]
+        - "scales_t":  [N, 1]        (log-space)
+        - "quats_t":   [N, 4]        (temporal/right quaternion for 4D rot)
+
+    Notes:
+        - The 4D rotation is built from two unit quaternions (l, r) via
+          left/right multiplication matrices in ℍ
+        - Scales are exponentiated to get stds, perturbed, then reduced by 1.6
+          (same factor gsplat uses) in log-space for children.
+    """
+    device = mask.device
+    sel = torch.where(mask)[0]
+    rest = torch.where(~mask)[0]
+    if len(sel) == 0:
+        return
+
+    scales_3 = torch.exp(params["scales"][sel])
+    quats_3 = F.normalize(params["quats"][sel], dim=-1)
+    scales_t_1 = torch.exp(params["scales_t"][sel])
+    stds_4 = torch.cat([scales_3, scales_t_1], dim=-1)
+    quats_t = F.normalize(params["quats_t"][sel], dim=-1)
+    rot4 = build_rotation_4d(quats_3, quats_t)
+    eps = torch.randn(2, len(stds_4), 4, device=device)
+    samples_4 = torch.einsum("nij,nj,bnj->bni", rot4, stds_4, eps)
+    samples_xyz = samples_4[..., :3]
+    samples_t = samples_4[..., 3:4]
+
+    def param_fn(name: str, p: torch.Tensor) -> torch.Tensor:
+        repeats = [2] + [1] * (p.dim() - 1)
+        if name == "means":
+            p_sel = p[sel]
+            p_split = (p_sel + samples_xyz).reshape(-1, 3)
+        elif name == "ts":
+            p_sel = p[sel]
+            p_split = (p_sel + samples_t).reshape(-1, 1)
+        elif name == "scales":
+            p_split = torch.log(scales_3 / 1.6).repeat(2, 1)
+        elif name == "scales_t":
+            p_split = torch.log(scales_t_1 / 1.6).repeat(2, 1)
+        elif name == "opacities" and revised_opacity:
+            new_op = 1.0 - torch.sqrt(1.0 - torch.sigmoid(p[sel]))
+            p_split = torch.logit(new_op).repeat(repeats)
+        else:
+            p_split = p[sel].repeat(repeats)
+        p_new = torch.cat([p[rest], p_split], dim=0)
+        return torch.nn.Parameter(p_new, requires_grad=p.requires_grad)
+
+    def optimizer_fn(key: str, v: torch.Tensor) -> torch.Tensor:
+        v_split = torch.zeros((2 * len(sel), *v.shape[1:]), device=device, dtype=v.dtype)
+        return torch.cat([v[rest], v_split], dim=0)
+
+    _update_param_with_optimizer(param_fn, optimizer_fn, params, optimizers)
+
+    for k, v in state.items():
+        if isinstance(v, torch.Tensor):
+            repeats = [2] + [1] * (v.dim() - 1)
+            v_new = v[sel].repeat(repeats)
+            state[k] = torch.cat([v[rest], v_new], dim=0)

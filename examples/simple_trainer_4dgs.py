@@ -15,7 +15,8 @@ import tqdm
 import tyro
 import viser
 import yaml
-from datasets.colmap import Dataset, Parser
+import re
+from datasets.colmap_dynamic import ParserDynamic, DatasetDynamic, TimestampCfg
 from datasets.traj import (
     generate_ellipse_path_z,
     generate_interpolated_path,
@@ -34,7 +35,7 @@ from gsplat import export_splats
 from gsplat.compression import PngCompression
 from gsplat.distributed import cli
 from gsplat.optimizers import SelectiveAdam
-from gsplat.rendering import rasterization
+from gsplat.rendering import rasterization4dgs
 from gsplat.strategy import DefaultStrategy, MCMCStrategy
 from gsplat_viewer import GsplatViewer, GsplatRenderTabState
 from nerfview import CameraState, RenderTabState, apply_float_colormap
@@ -64,7 +65,7 @@ class Config:
     # A global scaler that applies to the scene size related parameters
     global_scale: float = 1.0
     # Normalize the world space
-    normalize_world_space: bool = True
+    normalize_world_space: bool = False
     # Camera model
     camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole"
 
@@ -187,6 +188,25 @@ class Config:
     # Whether use fused-bilateral grid
     use_fused_bilagrid: bool = False
 
+    # Args for Dynamic Resolution
+    vid_time_start: float = 0.0 # start time for the video sequence (in seconds)
+    vid_time_end: float = 0.0
+
+    test_cameras: str = "cam00" # cam00,cam02,cam05
+    fps: float = 30.0 # original fps of the video
+    d_fps: int = 1 # downsample factor for fps. 1 means using all frames.
+
+    # LR for temporal mean
+    ts_lr: float = 1.6e-4
+    # LR for temporal scale
+    scales_t_lr: float = 5e-3
+    # LR for temporal quaternion
+    quats_t_lr: float = 1e-3
+    # sh degree for dynamic components
+    sh_degree_t: int = 2 # 1 or 2. If 0, then sh_degree must also be 0.
+
+    normalize_time: bool = False # normalize timestamps to [0,1] per camera if True
+
     def adjust_steps(self, factor: float):
         self.eval_steps = [int(i * factor) for i in self.eval_steps]
         self.save_steps = [int(i * factor) for i in self.save_steps]
@@ -209,7 +229,7 @@ class Config:
 
 
 def create_splats_with_optimizers(
-    parser: Parser,
+    parser: ParserDynamic,
     init_type: str = "sfm",
     init_num_pts: int = 100_000,
     init_extent: float = 3.0,
@@ -221,8 +241,12 @@ def create_splats_with_optimizers(
     quats_lr: float = 1e-3,
     sh0_lr: float = 2.5e-3,
     shN_lr: float = 2.5e-3 / 20,
+    ts_lr: float = 1.6e-4,
+    scales_t_lr: float = 5e-3,
+    quats_t_lr: float = 1e-3,
     scene_scale: float = 1.0,
     sh_degree: int = 3,
+    sh_degree_t: int = 2,
     sparse_grad: bool = False,
     visible_adam: bool = False,
     batch_size: int = 1,
@@ -254,17 +278,44 @@ def create_splats_with_optimizers(
     quats = torch.rand((N, 4))  # [N, 4]
     opacities = torch.logit(torch.full((N,), init_opacity))  # [N,]
 
+    # Temporal components
+    # ts = ((torch.rand(N, 1) * 1.2 - 0.1)
+    #       * (cfg.vid_time_end - cfg.vid_time_start)
+    #       + cfg.vid_time_start) # [N, 1]
+
+    ts = (torch.rand(N, 1, device="cuda")) * (
+            cfg.vid_time_end - cfg.vid_time_start) + cfg.vid_time_start
+
+    dist_t2 = torch.zeros_like(ts) + (cfg.vid_time_end - cfg.vid_time_start) / 5
+    scales_t = torch.log(torch.sqrt(dist_t2))
+
+    quats_t = torch.zeros((N, 4))
+    quats_t[:, 0] = 1
+
     params = [
         # name, value, lr
         ("means", torch.nn.Parameter(points), means_lr * scene_scale),
         ("scales", torch.nn.Parameter(scales), scales_lr),
         ("quats", torch.nn.Parameter(quats), quats_lr),
         ("opacities", torch.nn.Parameter(opacities), opacities_lr),
+        ("ts", torch.nn.Parameter(ts), ts_lr),
+        ("scales_t", torch.nn.Parameter(scales_t), scales_t_lr),
+        ("quats_t", torch.nn.Parameter(quats_t), quats_t_lr),
     ]
+
+    print(f"means lr: {means_lr * scene_scale}, ts lr: {ts_lr}")
+    print(f"scales lr: {scales_lr}, scales_t lr: {scales_t_lr}")
+    print(f"quats lr: {quats_lr}, quats_t lr: {quats_t_lr}")
+    print(f"opacities lr: {opacities_lr}")
 
     if feature_dim is None:
         # color is SH coefficients.
-        colors = torch.zeros((N, (sh_degree + 1) ** 2, 3))  # [N, K, 3]
+        if cfg.sh_degree_t > 0:
+            colors = torch.zeros((N, (sh_degree + 1) ** 2 * (cfg.sh_degree_t + 1), 3))  # [N, K, 3]
+        else:
+            assert cfg.sh_degree_t == 0, "cfg.sh_degree_t should be non-negative."
+            assert sh_degree == 0, "sh_degree should be 0 when cfg.sh_degree_t is 0."
+            colors = torch.zeros((N, 1, 3))  # [N, K, 3]
         colors[:, 0, :] = rgb_to_sh(rgbs)
         params.append(("sh0", torch.nn.Parameter(colors[:, :1, :]), sh0_lr))
         params.append(("shN", torch.nn.Parameter(colors[:, 1:, :]), shN_lr))
@@ -298,6 +349,7 @@ def create_splats_with_optimizers(
         )
         for name, _, lr in params
     }
+    # import pdb; pdb.set_trace()
     return splats, optimizers
 
 
@@ -307,7 +359,8 @@ class Runner:
     def __init__(
         self, local_rank: int, world_rank, world_size: int, cfg: Config
     ) -> None:
-        set_random_seed(42 + local_rank)
+        # set_random_seed(42 + local_rank)
+        set_random_seed(42)
 
         self.cfg = cfg
         self.world_rank = world_rank
@@ -332,19 +385,26 @@ class Runner:
         self.writer = SummaryWriter(log_dir=f"{cfg.result_dir}/tb")
 
         # Load data: Training data should contain initial points and colors.
-        self.parser = Parser(
+        self.parser = ParserDynamic(
             data_dir=cfg.data_dir,
             factor=cfg.data_factor,
             normalize=cfg.normalize_world_space,
-            test_every=cfg.test_every,
+            test_cams=cfg.test_cameras.split(","),
+            timestamp_cfg=TimestampCfg(
+                fps=cfg.fps,
+                d_fps=cfg.d_fps,
+                vid_time_start=cfg.vid_time_start,
+                vid_time_end=cfg.vid_time_end,
+                normalize=cfg.normalize_time,
+            ),
         )
-        self.trainset = Dataset(
+        self.trainset = DatasetDynamic(
             self.parser,
             split="train",
             patch_size=cfg.patch_size,
             load_depths=cfg.depth_loss,
         )
-        self.valset = Dataset(self.parser, split="val")
+        self.valset = DatasetDynamic(self.parser, split="val")
         self.scene_scale = self.parser.scene_scale * 1.1 * cfg.global_scale
         print("Scene scale:", self.scene_scale)
 
@@ -363,8 +423,12 @@ class Runner:
             quats_lr=cfg.quats_lr,
             sh0_lr=cfg.sh0_lr,
             shN_lr=cfg.shN_lr,
+            ts_lr=cfg.ts_lr,
+            scales_t_lr=cfg.scales_t_lr,
+            quats_t_lr=cfg.quats_t_lr,
             scene_scale=self.scene_scale,
             sh_degree=cfg.sh_degree,
+            sh_degree_t=cfg.sh_degree_t,
             sparse_grad=cfg.sparse_grad,
             visible_adam=cfg.visible_adam,
             batch_size=cfg.batch_size,
@@ -484,6 +548,7 @@ class Runner:
         self,
         camtoworlds: Tensor,
         Ks: Tensor,
+        timestamps: Tensor,
         width: int,
         height: int,
         masks: Optional[Tensor] = None,
@@ -497,6 +562,10 @@ class Runner:
         quats = self.splats["quats"]  # [N, 4]
         scales = torch.exp(self.splats["scales"])  # [N, 3]
         opacities = torch.sigmoid(self.splats["opacities"])  # [N,]
+
+        ts = self.splats["ts"]  # [N, 1]
+        quats_t = self.splats["quats_t"]  # [N, 4]
+        scales_t = torch.exp(self.splats["scales_t"])  # [N, 1]
 
         image_ids = kwargs.pop("image_ids", None)
         if self.cfg.app_opt:
@@ -515,14 +584,18 @@ class Runner:
             rasterize_mode = "antialiased" if self.cfg.antialiased else "classic"
         if camera_model is None:
             camera_model = self.cfg.camera_model
-        render_colors, render_alphas, info = rasterization(
+        render_colors, render_alphas, info = rasterization4dgs(
             means=means,
             quats=quats,
             scales=scales,
             opacities=opacities,
             colors=colors,
+            ts=ts,
+            quats_t=quats_t,
+            scales_t=scales_t,
             viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
             Ks=Ks,  # [C, 3, 3]
+            timestamps=timestamps,
             width=width,
             height=height,
             packed=self.cfg.packed,
@@ -535,8 +608,6 @@ class Runner:
             rasterize_mode=rasterize_mode,
             distributed=self.world_size > 1,
             camera_model=self.cfg.camera_model,
-            with_ut=self.cfg.with_ut,
-            with_eval3d=self.cfg.with_eval3d,
             **kwargs,
         )
         if masks is not None:
@@ -561,6 +632,10 @@ class Runner:
             # means has a learning rate schedule, that end at 0.01 of the initial value
             torch.optim.lr_scheduler.ExponentialLR(
                 self.optimizers["means"], gamma=0.01 ** (1.0 / max_steps)
+            ),
+            # ts has a learning rate schedule, that end at 0.01 of the initial value
+            torch.optim.lr_scheduler.ExponentialLR(
+                self.optimizers["ts"], gamma=0.01 ** (1.0 / max_steps)
             ),
         ]
         if cfg.pose_opt:
@@ -615,6 +690,7 @@ class Runner:
 
             camtoworlds = camtoworlds_gt = data["camtoworld"].to(device)  # [1, 4, 4]
             Ks = data["K"].to(device)  # [1, 3, 3]
+            timestamps = data["timestamps"].to(device)  # [1,]
             pixels = data["image"].to(device) / 255.0  # [1, H, W, 3]
             num_train_rays_per_step = (
                 pixels.shape[0] * pixels.shape[1] * pixels.shape[2]
@@ -635,14 +711,17 @@ class Runner:
 
             # sh schedule
             sh_degree_to_use = min(step // cfg.sh_degree_interval, cfg.sh_degree)
+            sh_degree_t_to_use = min(step // cfg.sh_degree_interval, cfg.sh_degree_t)
 
             # forward
             renders, alphas, info = self.rasterize_splats(
                 camtoworlds=camtoworlds,
                 Ks=Ks,
+                timestamps=timestamps,
                 width=width,
                 height=height,
                 sh_degree=sh_degree_to_use,
+                sh_degree_t=sh_degree_t_to_use,
                 near_plane=cfg.near_plane,
                 far_plane=cfg.far_plane,
                 image_ids=image_ids,
@@ -717,14 +796,15 @@ class Runner:
 
             loss.backward()
 
-            desc = f"loss={loss.item():.3f}| " f"sh degree={sh_degree_to_use}| "
-            if cfg.depth_loss:
-                desc += f"depth loss={depthloss.item():.6f}| "
-            if cfg.pose_opt and cfg.pose_noise:
-                # monitor the pose error if we inject noise
-                pose_err = F.l1_loss(camtoworlds_gt, camtoworlds)
-                desc += f"pose err={pose_err.item():.6f}| "
-            pbar.set_description(desc)
+            # import pdb; pdb.set_trace()
+
+            # Check for NaN or large gradients
+            def safe_abs_max(x, default=0.0):
+                if x is None:
+                    return default
+                if x.numel() == 0:
+                    return default
+                return x.abs().max().item()
 
             for name, param in self.splats.items():
                 if param.grad is not None:
@@ -738,9 +818,18 @@ class Runner:
                         print(f"Warning: Parameter '{name}' has NaN gradients at step {step}")
 
                     # Check for large magnitude (>100)
-                    max_grad = torch.abs(grad).max().item()
+                    max_grad = safe_abs_max(grad, default=0.0)
                     if max_grad > 100:
                         print(f"Warning: Parameter '{name}' has large gradient (max magnitude: {max_grad:.2f}) at step {step}")
+
+            desc = f"loss={loss.item():.3f}| " f"sh degree={sh_degree_to_use}| " f"sh degree t={sh_degree_t_to_use}| "
+            if cfg.depth_loss:
+                desc += f"depth loss={depthloss.item():.6f}| "
+            if cfg.pose_opt and cfg.pose_noise:
+                # monitor the pose error if we inject noise
+                pose_err = F.l1_loss(camtoworlds_gt, camtoworlds)
+                desc += f"pose err={pose_err.item():.6f}| "
+            pbar.set_description(desc)
 
             # write images (gt and render)
             # if world_rank == 0 and step % 800 == 0:
@@ -900,7 +989,7 @@ class Runner:
             # eval the full set
             if step in [i - 1 for i in cfg.eval_steps]:
                 self.eval(step)
-                self.render_traj(step)
+                # self.render_traj(step)
 
             # run compression
             if cfg.compression is not None and step in [i - 1 for i in cfg.eval_steps]:
@@ -921,6 +1010,11 @@ class Runner:
 
     @torch.no_grad()
     def eval(self, step: int, stage: str = "val"):
+        def _fmt_cam(cam_key: str) -> str:
+            # normalize "cam1" / "cam01" / "cam001" -> "cam01"
+            m = re.search(r"(\d+)", cam_key)
+            return f"cam{int(m.group(1)):02d}" if m else cam_key
+
         """Entry for evaluation."""
         print("Running evaluation...")
         cfg = self.cfg
@@ -945,9 +1039,11 @@ class Runner:
             colors, _, _ = self.rasterize_splats(
                 camtoworlds=camtoworlds,
                 Ks=Ks,
+                timestamps=data["timestamps"].to(device),
                 width=width,
                 height=height,
                 sh_degree=cfg.sh_degree,
+                sh_degree_t=cfg.sh_degree_t,
                 near_plane=cfg.near_plane,
                 far_plane=cfg.far_plane,
                 masks=masks,
@@ -960,10 +1056,21 @@ class Runner:
 
             if world_rank == 0:
                 # write images
+                cam_key = data.get("cam_key", "")
+                if isinstance(cam_key, (list, tuple)):  # default collate makes strings into a list
+                    cam_key = cam_key[0]
+                cam_key = _fmt_cam(str(cam_key))
+
+                frame_idx = data.get("frame_idx", i)
+                if torch.is_tensor(frame_idx):
+                    frame_idx = int(frame_idx.item())
+                elif isinstance(frame_idx, (list, tuple)):
+                    frame_idx = int(frame_idx[0])
+
                 canvas = torch.cat(canvas_list, dim=2).squeeze(0).cpu().numpy()
                 canvas = (canvas * 255).astype(np.uint8)
                 imageio.imwrite(
-                    f"{self.render_dir}/{stage}_step{step}_{i:04d}.png",
+                    f"{self.render_dir}/{stage}_step{step}_{cam_key}_{frame_idx:04d}.png",
                     canvas,
                 )
 
